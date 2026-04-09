@@ -449,23 +449,13 @@ def cmd_search(args):
         print()
 
 
-def cmd_export(args):
-    """Export a session to various formats."""
-    session = find_session(args.session_id)
-    if not session:
-        print(f"Session not found: {args.session_id}")
-        print("Use 'claude-chat.py list' to see available sessions.")
-        return
-
-    session.parse()
-    fmt = args.format or "md"
-    out_dir = Path(args.output) if args.output else Path(".")
-
+def _export_session(session, fmt, out_dir, rich=False):
+    """Export a single session to the given format and directory. Returns the output path."""
     if fmt == "md":
         content = export_markdown(session)
         ext = ".md"
     elif fmt == "html":
-        content = export_html(session, rich=getattr(args, "rich", False))
+        content = export_html(session, rich=rich)
         ext = ".html"
     elif fmt == "txt":
         content = export_txt(session)
@@ -475,7 +465,7 @@ def cmd_export(args):
         ext = ".tex"
     else:
         print(f"Unknown format: {fmt}. Use: md, html, txt, tex")
-        return
+        return None
 
     filename = f"claude-chat_{session.short_id}_{session.modified.strftime('%Y%m%d')}{ext}"
     out_path = out_dir / filename
@@ -483,10 +473,49 @@ def cmd_export(args):
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(content)
 
-    print(f"Exported to: {out_path}")
+    return out_path
 
-    if args.open:
-        webbrowser.open(str(out_path.resolve()))
+
+def cmd_export(args):
+    """Export a session to various formats."""
+    if not args.all and not args.session_id:
+        print("Specify a session ID, or use --all to export every session.")
+        print("Use 'claude-chat.py list' to see available sessions.")
+        return
+
+    fmt = args.format or "md"
+    out_dir = Path(args.output) if args.output else Path(".")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    rich = getattr(args, "rich", False)
+
+    if args.all:
+        sessions = find_all_sessions(getattr(args, "project", None))
+        if not sessions:
+            print("No sessions found.")
+            return
+        print(f"Exporting {len(sessions)} session(s) to {fmt}...")
+        exported = 0
+        for s in sessions:
+            s.parse()
+            out_path = _export_session(s, fmt, out_dir, rich=rich)
+            if out_path:
+                print(f"  {s.short_id} -> {out_path.name}")
+                exported += 1
+        print(f"\n{exported} session(s) exported to {out_dir}")
+        return
+
+    session = find_session(args.session_id)
+    if not session:
+        print(f"Session not found: {args.session_id}")
+        print("Use 'claude-chat.py list' to see available sessions.")
+        return
+
+    session.parse()
+    out_path = _export_session(session, fmt, out_dir, rich=rich)
+    if out_path:
+        print(f"Exported to: {out_path}")
+        if args.open:
+            webbrowser.open(str(out_path.resolve()))
 
 
 def cmd_backup(args):
@@ -1509,7 +1538,9 @@ Examples:
 
     # export
     p = sub.add_parser("export", help="Export session to file")
-    p.add_argument("session_id", help="Session ID (full or first 8 chars)")
+    p.add_argument("session_id", nargs="?", help="Session ID (full or first 8 chars)")
+    p.add_argument("--all", "-a", action="store_true", help="Export all sessions")
+    p.add_argument("--project", "-p", help="Filter by project name (use with --all)")
     p.add_argument("--format", "-f", choices=["md", "html", "txt", "tex"], default="md", help="Output format")
     p.add_argument("--output", "-o", help="Output directory")
     p.add_argument("--open", action="store_true", help="Open in browser/editor after export")

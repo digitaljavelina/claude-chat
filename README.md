@@ -42,6 +42,10 @@ Export a session to Markdown, HTML, plain text, or LaTeX.
 python3 claude-chat.py export a7e44ed0 --format html --open
 python3 claude-chat.py export a7e44ed0 --format md
 python3 claude-chat.py export a7e44ed0 --format tex
+
+# Export all sessions at once
+python3 claude-chat.py export --all --format html --output ./exports
+python3 claude-chat.py export --all --project myapp --format md
 ```
 
 The HTML export includes syntax highlighting, dark theme, clickable links, and math rendering.
