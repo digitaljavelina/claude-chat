@@ -1,2 +1,6 @@
 CLAUDE.local.md
 .claude/settings.local.json
+.DS_Store
+.claude/.DS_Store
+.claude/skills/.DS_Store
+exports/
