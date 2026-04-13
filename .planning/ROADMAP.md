@@ -41,10 +41,10 @@ Five phases, derived from the research-synthesis convergence (SUMMARY.md §5) an
 
 Plans:
 
-- [ ] 01-01-PLAN.md — Add export --stdout to claude-chat.py + protect audit doc
-- [ ] 01-02-PLAN.md — Create sync_chats.py with init, scan, and all pure functions
-- [ ] 01-03-PLAN.md — Write pipeline with 3-layer clobber defense + status subcommand
-- [ ] 01-04-PLAN.md — Unit tests + end-to-end canary script
+- [x] 01-01-PLAN.md — Add export --stdout to claude-chat.py + protect audit doc
+- [x] 01-02-PLAN.md — Create sync_chats.py with init, scan, and all pure functions
+- [x] 01-03-PLAN.md — Write pipeline with 3-layer clobber defense + status subcommand
+- [x] 01-04-PLAN.md — Unit tests + end-to-end canary script
 
 ### Phase 2: SKILL.md + AI Labeling
 
