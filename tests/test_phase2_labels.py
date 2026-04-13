@@ -17,6 +17,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 import unittest
 
 # ─── Bootstrap: add project root to sys.path so 'import sync_chats' works ─────
@@ -28,6 +29,92 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import sync_chats  # noqa: E402
+
+# ─── Module-level helpers for ultra-short skip logic ─────────────────────────
+#
+# These functions replicate the user message counting logic from SKILL.md Step 2a.
+# They are module-level (not methods) so they can be tested in isolation and, if
+# needed, imported by future plans.
+#
+# Python beginner note: a module-level function is defined at the top level of a
+# .py file, outside any class. That makes it callable as count_user_messages(path)
+# rather than instance.count_user_messages(path).
+
+
+def count_user_messages(jsonl_path: str) -> int:
+    """Count meaningful user messages in a JSONL file.
+
+    Handles two content formats Claude Code uses:
+      - Plain string: {"role": "user", "content": "some text"}
+      - Block list:   {"role": "user", "content": [{"type": "text", "text": "some text"}]}
+
+    Skips:
+      - Messages whose content contains '<system-reminder>' (injected context, not real user input)
+      - Messages whose text is 5 characters or fewer (too short to be meaningful)
+      - Lines that are not valid JSON
+
+    Args:
+        jsonl_path: Absolute or relative path to a .jsonl session file.
+
+    Returns:
+        int: Number of meaningful user messages in the file. Returns 0 for an
+             empty file or a file with no qualifying user messages.
+    """
+    count = 0
+    # 'errors=replace' means garbled bytes in the file become ? instead of crashing.
+    # This mirrors the SKILL.md Bash one-liner's 'errors=replace' flag.
+    try:
+        with open(jsonl_path, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    # Skip malformed lines — mirrors SKILL.md's 'except Exception: continue'
+                    continue
+                # JSONL lines may be wrapped: {"message": {...}} or be the message directly
+                msg = obj.get("message", obj)
+                if msg.get("role") != "user":
+                    continue
+                content = msg.get("content", "")
+                if isinstance(content, str):
+                    text = content.strip()
+                elif isinstance(content, list):
+                    # Block-list format: join text from all text-type blocks
+                    text = " ".join(
+                        b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"
+                    ).strip()
+                else:
+                    text = ""
+                # Skip system-reminder injections and trivially short content
+                if "<system-reminder>" in text:
+                    continue
+                if len(text) > 5:
+                    count += 1
+    except (OSError, IOError):
+        # File not found or unreadable — return 0 rather than crashing
+        return 0
+    return count
+
+
+def should_skip_session(jsonl_path: str) -> bool:
+    """Return True if a session should be skipped due to too few user messages.
+
+    Per D-05: sessions with fewer than 2 user messages are ultra-short and
+    skipped entirely (no vault file written). This mirrors the skip condition
+    in SKILL.md Step 2a: "if count < 2, skip".
+
+    Args:
+        jsonl_path: Absolute or relative path to a .jsonl session file.
+
+    Returns:
+        bool: True if fewer than 2 meaningful user messages were found (skip).
+              False if 2 or more were found (process normally).
+    """
+    return count_user_messages(jsonl_path) < 2
+
 
 # ─── Fixture paths ────────────────────────────────────────────────────────────
 FIXTURE_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
@@ -423,6 +510,144 @@ class TestStubFallback(unittest.TestCase):
         label = sync_chats.make_stub_label(pathlib.Path(SHORT_SESSION), SHORT_SESSION_ID)
         self.assertIsInstance(label["title"], str)
         self.assertTrue(label["title"].strip())
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TestEdgeCases — count_user_messages() and should_skip_session() edge cases
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestEdgeCases(unittest.TestCase):
+    """Tests for the module-level count_user_messages() and should_skip_session().
+
+    These tests verify LABEL-07 / D-05: sessions with fewer than 2 user messages
+    are skipped entirely. They cover boundary cases (0, 1, 2 messages), both
+    content formats (plain string and block-list), system-reminder filtering,
+    and graceful handling of empty files.
+
+    Python beginner note: tempfile.NamedTemporaryFile creates a real file on disk
+    inside the OS temp directory. We use delete=False so we can close it and
+    re-open it by name for testing. The tearDown method cleans up all temp files
+    created during the test, even if a test assertion fails mid-way.
+    """
+
+    def setUp(self):
+        """Track temp files created during each test for cleanup."""
+        # self._temp_files is a list of paths to delete in tearDown.
+        # setUp runs before each individual test method.
+        self._temp_files = []
+
+    def tearDown(self):
+        """Delete all temp files created during this test."""
+        # tearDown runs after each individual test method, even if the test fails.
+        for path in self._temp_files:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    def _make_temp_jsonl(self, lines: list) -> str:
+        """Write a list of JSONL strings to a temp file and return its path.
+
+        Args:
+            lines: List of already-serialized JSON strings (one per line).
+                   Pass an empty list for an empty file.
+
+        Returns:
+            str: Absolute path to the temp file.
+        """
+        # suffix='.jsonl' is cosmetic — it does not affect file behaviour.
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+            for line in lines:
+                f.write(line + "\n")
+            path = f.name
+        self._temp_files.append(path)
+        return path
+
+    def _user_msg(self, text: str) -> str:
+        """Serialize a plain-string user message as a JSONL line."""
+        return json.dumps({"message": {"role": "user", "content": text}})
+
+    def _user_block_msg(self, text: str) -> str:
+        """Serialize a block-list user message as a JSONL line."""
+        return json.dumps({"message": {"role": "user", "content": [{"type": "text", "text": text}]}})
+
+    def _assistant_msg(self, text: str) -> str:
+        """Serialize an assistant message as a JSONL line (should not be counted)."""
+        return json.dumps({"message": {"role": "assistant", "content": text}})
+
+    # ── count_user_messages — fixture files ───────────────────────────────────
+
+    def test_count_short_session(self):
+        """short_session.jsonl has exactly 1 user message."""
+        count = count_user_messages(SHORT_SESSION)
+        self.assertEqual(count, 1, f"Expected 1 user message in short_session.jsonl, got {count}")
+
+    def test_count_multi_turn(self):
+        """multi_turn_session.jsonl has >= 6 user messages."""
+        count = count_user_messages(MULTI_TURN_SESSION)
+        self.assertGreaterEqual(count, 6, f"Expected >= 6 user messages in multi_turn_session.jsonl, got {count}")
+
+    # ── count_user_messages — empty file ─────────────────────────────────────
+
+    def test_count_empty_file(self):
+        """An empty file returns 0."""
+        path = self._make_temp_jsonl([])
+        self.assertEqual(count_user_messages(path), 0)
+
+    # ── count_user_messages — system-reminder filtering ───────────────────────
+
+    def test_count_skips_system_reminder(self):
+        """A user message whose content contains '<system-reminder>' is not counted.
+
+        These are Claude Code context injections, not real user input.
+        """
+        path = self._make_temp_jsonl(
+            [
+                self._user_msg("<system-reminder>You are Claude Code.</system-reminder>"),
+            ]
+        )
+        self.assertEqual(count_user_messages(path), 0)
+
+    # ── count_user_messages — block-list content format ───────────────────────
+
+    def test_count_block_list_format(self):
+        """A user message in block-list format (list of typed blocks) is counted."""
+        path = self._make_temp_jsonl(
+            [
+                self._user_block_msg("Hello world"),
+            ]
+        )
+        self.assertEqual(count_user_messages(path), 1)
+
+    # ── should_skip_session — boundary cases ──────────────────────────────────
+
+    def test_should_skip_0_messages(self):
+        """Empty file (0 user messages) should be skipped."""
+        path = self._make_temp_jsonl([])
+        self.assertTrue(should_skip_session(path))
+
+    def test_should_skip_1_message(self):
+        """short_session.jsonl (1 user message) should be skipped."""
+        self.assertTrue(should_skip_session(SHORT_SESSION))
+
+    def test_should_not_skip_2_messages(self):
+        """A session with exactly 2 user messages should NOT be skipped.
+
+        D-05 threshold: skip if count < 2, so 2 is the first passing value.
+        """
+        path = self._make_temp_jsonl(
+            [
+                self._user_msg("First real question here"),
+                self._assistant_msg("Here is the answer."),
+                self._user_msg("Follow-up question here"),
+            ]
+        )
+        self.assertFalse(should_skip_session(path))
+
+    def test_should_not_skip_multi_turn(self):
+        """multi_turn_session.jsonl (6+ user messages) should NOT be skipped."""
+        self.assertFalse(should_skip_session(MULTI_TURN_SESSION))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
