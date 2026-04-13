@@ -622,10 +622,15 @@ def _log_sync(message: str) -> None:
 
 
 def _resolve_vault_filename(config: dict, label: dict, session_date: str, session_id: str) -> Path:
-    """Build the target vault Path for a session, handling filename collisions (D-13/D-15).
+    """Build the base vault Path for a session (no collision suffix applied here).
 
     Filename convention: <machine>--YYYY-MM-DD--<slug>.md (per D-13)
-    Collision handling: if target exists, try -2, -3, ... up to -99 (per D-15)
+
+    NOTE: This function intentionally does NOT handle collisions. The write pipeline
+    must first attempt the base name so that crash reconciliation (_reconcile_crash) can
+    determine whether an existing file is a crash-recovery case or a true slug collision.
+    Collision suffixes (-2, -3, ...) are applied in cmd_write ONLY after reconciliation
+    confirms the existing file belongs to a different session (D-15).
     """
     slug = make_slug(label["title"], session_id)
     machine = config["machine_label"]
@@ -635,18 +640,7 @@ def _resolve_vault_filename(config: dict, label: dict, session_date: str, sessio
     vault_dir = Path(config["vault_path"]) / "Chats"
     os.makedirs(str(vault_dir), exist_ok=True)
 
-    target = vault_dir / base_name
-
-    # Per D-15: if the base name is already taken, try -2, -3, ... -99
-    # This handles the (rare) case of two different sessions producing the same slug on the same date
-    if target.exists():
-        for i in range(2, 100):
-            candidate = vault_dir / f"{machine}--{session_date}--{slug}-{i}.md"
-            if not candidate.exists():
-                target = candidate
-                break
-
-    return target
+    return vault_dir / base_name
 
 
 # ─── Commands ─────────────────────────────────────────────────────────────────
@@ -841,6 +835,9 @@ def cmd_write(args) -> None:
 
         if not written:
             # File already exists — run crash reconciliation (D-25 / clobber layer 3)
+            # This distinguishes two cases:
+            #   "reconciled": our file from a previous crash — update state and skip
+            #   "collision":  a different session's file with the same slug — try -2, -3, ...
             fingerprint = {
                 "mtime": jsonl_path.stat().st_mtime,
                 "size": jsonl_path.stat().st_size,
@@ -851,13 +848,23 @@ def cmd_write(args) -> None:
                 print("skipped: already_synced (recovered from interrupted write)")
                 return
             else:
-                # Genuine collision or user-edited file — refuse and ask for manual review
-                print(
-                    f"Error: File already exists and content differs: {target}\n"
-                    "Manual review needed. Delete the existing file to force a re-write.",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
+                # True slug collision: a different session produced the same filename.
+                # Per D-15: try appending -2, -3, ... -99 until a free name is found.
+                vault_dir = target.parent
+                slug_base = target.stem  # e.g. "mbp--2026-03-19--debug-export"
+                written = False
+                for i in range(2, 100):
+                    target = vault_dir / f"{slug_base}-{i}.md"
+                    written = _write_if_not_exists(target, final_bytes)
+                    if written:
+                        break
+                if not written:
+                    print(
+                        f"Error: Could not find a free filename after 99 attempts "
+                        f"(slug base: {slug_base}). Manual intervention required.",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
 
         # Step 9: Update state atomically per-session (D-26)
         # Do this immediately after each write — crash-safe even if later sessions fail
