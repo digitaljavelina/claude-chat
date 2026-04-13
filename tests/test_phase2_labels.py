@@ -182,17 +182,22 @@ def validate_gist(gist: str) -> bool:
     Per LABEL-04: gist is 2-3 sentences in past tense. We accept 1-3 for
     flexibility (stub labels may have shorter gists in edge cases).
 
-    Sentence count heuristic: count occurrences of '. ' (period + space) and
-    add 1 for the final sentence. This is intentionally simple — it will
-    miscount sentences with abbreviations, but is good enough for validation.
+    Sentence count heuristic: count sentence-ending punctuation marks (., !,
+    or ?) that are followed by either a space or the end of the string. This
+    correctly handles terminal sentences that end without a trailing space, and
+    handles !, ? endings. It will still miscount abbreviations inside sentences,
+    but is good enough for validation.
     """
     if not isinstance(gist, str):
         return False
     stripped = gist.strip()
     if not stripped:
         return False
-    # Count sentence boundaries: '. ' separators, plus 1 for the last sentence
-    sentence_count = stripped.count(". ") + 1
+    # Count sentence-ending punctuation followed by a space or end-of-string
+    sentence_count = len(re.findall(r"[.!?](?:\s|$)", stripped))
+    # Fall back to at-least-1 if no punctuation found
+    if sentence_count == 0:
+        sentence_count = 1
     return 1 <= sentence_count <= 3
 
 
