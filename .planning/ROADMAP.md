@@ -56,7 +56,7 @@ Plans:
 1. User types `/sync-chats` in an interactive Claude Code session and the skill loads, scans for deltas, and processes each delta one at a time.
 2. User opens a freshly-written file in Obsidian and sees a title of ≤10 words (verb-leading where applicable) that captures the conversation's gist.
 3. User opens the same file and sees a 2–3 sentence past-tense gist, a YAML list of 3–5 kebab-case tags (not comma-separated, not inline `#tag`), and a `coherence_score` between 1 and 5.
-4. User runs `/sync-chats` against a session that is <500 characters and the skill skips it entirely (no file written); user runs it against a mostly-tool-call session and the resulting file has a `low_signal` tag; against a clearly multi-topic session, a `multi_topic` tag.
+4. User runs `/sync-chats` against a session with fewer than 2 user messages and the skill skips it entirely (no file written); user runs it against a mostly-tool-call session and the resulting file has a `low-signal` tag; against a clearly multi-topic session, a `multi-topic` tag.
 5. User simulates a malformed JSON label response and the skill falls back to the Phase 1 stub label (`title = first 8 words of first user message`) and still writes the file — the run never crashes.
 6. The skill file at `~/.claude/skills/sync-chats/SKILL.md` has the correct frontmatter (`name`, `description`, `disable-model-invocation: true`, `allowed-tools` whitelist, `argument-hint`) and is discoverable by Claude Code.
    **Plans:** 3 plans

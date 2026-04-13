@@ -2,8 +2,8 @@
 phase: 2
 slug: skill-md-ai-labeling
 status: draft
-nyquist_compliant: false
-wave_0_complete: false
+nyquist_compliant: true
+wave_0_complete: true
 created: 2026-04-13
 ---
 
@@ -54,7 +54,7 @@ _Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky_
 
 ## Wave 0 Requirements
 
-- [ ] `tests/test_labeling.py` — stubs for LABEL-03 through LABEL-08 validation helpers
+- [x] `tests/test_phase2_labels.py` — stubs for LABEL-03 through LABEL-08 validation helpers (created in Plan 02-01 Task 2)
 - [ ] Verify Phase 1 test suite still green before starting Phase 2
 
 _Existing Phase 1 test infrastructure covers the pipeline; Phase 2 adds labeling-specific tests._

@@ -35,7 +35,7 @@ The Claude-driven semantic layer. Lives inside SKILL.md, not `sync_chats.py`.
 - [ ] **LABEL-04**: AI-generated gist is 2–3 sentences in past tense summarizing what happened in the chat
 - [ ] **LABEL-05**: AI-generated tags are 3–5 kebab-case strings, stored as a YAML list (not comma-separated, not inline `#tag`) so Dataview can query them
 - [ ] **LABEL-06**: A `coherence_score` (1–5) is generated alongside each label and stored in frontmatter for downstream filtering
-- [ ] **LABEL-07**: Edge cases are handled by tags: ultra-short sessions (< 500 chars) are skipped entirely, low-signal sessions (mostly tool calls) get `low_signal` tag, multi-topic sessions get `multi_topic` tag
+- [ ] **LABEL-07**: Edge cases are handled by tags: ultra-short sessions (fewer than 2 user messages) are skipped entirely, low-signal sessions (mostly tool calls) get `low-signal` tag, multi-topic sessions get `multi-topic` tag
 - [ ] **LABEL-08**: If JSON parsing of the AI's label response fails, the skill falls back to a deterministic stub label (`title = first 8 words of first user message`) rather than crashing the run
 - [ ] **LABEL-09**: Phase 1 / Phase 2 boundary: `sync_chats.py write` accepts label JSON via stdin or flags so labels can be supplied either by the skill (Phase 2+) or by stub-label generation (Phase 1)
 
