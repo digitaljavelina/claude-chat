@@ -885,9 +885,37 @@ def cmd_write(args) -> None:
 
 
 def cmd_status(args) -> None:
-    """Show sync status summary. (Not yet implemented — Plan 03)"""
-    print("Not yet implemented. Coming in Plan 03.", file=sys.stderr)
-    sys.exit(1)
+    """Show sync status summary (CORE-13).
+
+    Displays:
+      - Machine label and hostname (from config)
+      - Vault path (from config)
+      - Last run timestamp (from state)
+      - Count of already-synced sessions
+      - Count of pending (unsynced) sessions discovered by scanner
+    """
+    config = _require_config()
+    state = load_state()
+
+    # Discover pending sessions using the same scanner as cmd_scan
+    # (sessions not in synced_session_ids and with changed mtime+size fingerprint)
+    if not PROJECTS_DIR.exists():
+        # Graceful degradation: no Claude projects directory on this machine yet
+        print(f"Note: No Claude projects directory found at {PROJECTS_DIR}")
+        pending = []
+    else:
+        pending = discover_sessions(state)
+
+    # Format last_run_at: state stores ISO timestamp or None on first run
+    last_run = state.get("last_run_at") or "never"
+
+    # Print aligned status lines — Tab-like alignment for readability
+    print(f"Machine:    {config['machine_label']}")
+    print(f"Hostname:   {socket.gethostname()}")
+    print(f"Vault:      {config['vault_path']}")
+    print(f"Last run:   {last_run}")
+    print(f"Synced:     {len(state.get('synced_session_ids', []))} sessions")
+    print(f"Pending:    {len(pending)} sessions")
 
 
 # ─── Entry Point ──────────────────────────────────────────────────────────────
