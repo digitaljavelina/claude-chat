@@ -63,9 +63,9 @@ Plans:
 
 Plans:
 
-- [ ] 02-01-PLAN.md — Create SKILL.md with frontmatter + test scaffolding and fixtures
-- [ ] 02-02-PLAN.md — Write production labeling prompt with few-shot examples
-- [ ] 02-03-PLAN.md — Edge-case tests + end-to-end skill verification
+- [x] 02-01-PLAN.md — Create SKILL.md with frontmatter + test scaffolding and fixtures
+- [x] 02-02-PLAN.md — Write production labeling prompt with few-shot examples
+- [x] 02-03-PLAN.md — Edge-case tests + end-to-end skill verification
 
 ### Phase 3: PII Scrub Integration + Crash Safety Polish
 
