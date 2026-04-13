@@ -199,7 +199,8 @@ def discover_sessions(state: dict) -> list:
         except ValueError:
             continue
 
-        if len(rel_parts) != 2:
+        # Depth filter: keep only files where len(rel_parts) == 2 (top-level sessions)
+        if not (len(rel_parts) == 2):
             continue
 
         session_id = f.stem  # UUID (filename without .jsonl extension)
