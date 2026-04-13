@@ -522,5 +522,155 @@ class TestFixtures(unittest.TestCase):
         self.assertTrue(has_list_content, "multi_turn_session.jsonl missing block-list content")
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# TestFewShotExamples — validate that few-shot examples in SKILL.md pass validators
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestFewShotExamples(unittest.TestCase):
+    """Tests that the few-shot JSON examples embedded in SKILL.md are structurally valid.
+
+    Why this matters: SKILL.md contains 4 few-shot examples that Claude sees before
+    labeling a real session. If an example has a bad title (>10 words), invalid tags
+    (not kebab-case), or an out-of-range coherence score, it trains Claude to produce
+    similarly broken output. These tests catch that at CI time.
+
+    Python beginner note: pathlib.Path.home() returns the user's home directory as
+    a Path object (e.g., /Users/michaelhenry). The / operator on Path objects joins
+    path segments, so Path.home() / '.claude/skills/sync-chats/SKILL.md' produces
+    the full path to the skill file.
+    """
+
+    SKILL_PATH = __import__("pathlib").Path.home() / ".claude/skills/sync-chats/SKILL.md"
+
+    def _load_skill_content(self) -> str:
+        """Read SKILL.md and return its text content."""
+        self.assertTrue(
+            self.SKILL_PATH.exists(),
+            f"SKILL.md not found at {self.SKILL_PATH} — is sync-chats skill installed?",
+        )
+        return self.SKILL_PATH.read_text(encoding="utf-8")
+
+    def _extract_json_examples(self, content: str) -> list:
+        """Extract and parse all ```json code blocks from a string.
+
+        Returns a list of dicts for blocks that parse as valid JSON objects.
+        Blocks that fail to parse are silently skipped (they are tested
+        separately by TestExtractLabelJson).
+
+        re.DOTALL makes '.' match newlines so multi-line JSON blocks are captured.
+        re.findall returns a list of all non-overlapping matches.
+        """
+        raw_blocks = re.findall(r"```json\s*(.*?)\s*```", content, re.DOTALL)
+        examples = []
+        for block in raw_blocks:
+            try:
+                parsed = json.loads(block.strip())
+                # Only include objects that have the label keys we care about
+                if isinstance(parsed, dict) and "title" in parsed:
+                    examples.append(parsed)
+            except json.JSONDecodeError:
+                pass
+        return examples
+
+    def test_skill_md_has_at_least_four_examples(self):
+        """SKILL.md contains at least 4 parseable JSON label examples."""
+        content = self._load_skill_content()
+        examples = self._extract_json_examples(content)
+        self.assertGreaterEqual(
+            len(examples),
+            4,
+            f"Expected at least 4 JSON label examples in SKILL.md, found {len(examples)}. "
+            "Check that all 4 few-shot examples have valid JSON.",
+        )
+
+    def test_all_examples_have_valid_title(self):
+        """Every few-shot example in SKILL.md has a valid title (non-empty, <=10 words)."""
+        content = self._load_skill_content()
+        examples = self._extract_json_examples(content)
+        self.assertGreaterEqual(len(examples), 4)
+        for i, example in enumerate(examples):
+            with self.subTest(example_index=i, title=example.get("title")):
+                self.assertIn("title", example, f"Example {i} missing 'title' key")
+                self.assertTrue(
+                    validate_title(example["title"]),
+                    f"Example {i} title failed validation: {example['title']!r} "
+                    f"({len(example['title'].split())} words, max is 10)",
+                )
+
+    def test_all_examples_have_valid_tags(self):
+        """Every few-shot example in SKILL.md has valid tags (3-5 kebab-case strings)."""
+        content = self._load_skill_content()
+        examples = self._extract_json_examples(content)
+        self.assertGreaterEqual(len(examples), 4)
+        for i, example in enumerate(examples):
+            with self.subTest(example_index=i, tags=example.get("tags")):
+                self.assertIn("tags", example, f"Example {i} missing 'tags' key")
+                self.assertTrue(
+                    validate_tags(example["tags"]),
+                    f"Example {i} tags failed validation: {example['tags']!r} "
+                    "(must be 3-5 kebab-case strings matching ^[a-z0-9]+(-[a-z0-9]+)*$)",
+                )
+
+    def test_all_examples_have_valid_coherence_score(self):
+        """Every few-shot example in SKILL.md has a valid coherence_score (int 1-5)."""
+        content = self._load_skill_content()
+        examples = self._extract_json_examples(content)
+        self.assertGreaterEqual(len(examples), 4)
+        for i, example in enumerate(examples):
+            with self.subTest(example_index=i, score=example.get("coherence_score")):
+                self.assertIn("coherence_score", example, f"Example {i} missing 'coherence_score' key")
+                self.assertTrue(
+                    validate_coherence_score(example["coherence_score"]),
+                    f"Example {i} coherence_score failed validation: {example['coherence_score']!r} (must be int 1-5)",
+                )
+
+    def test_all_examples_have_valid_gist(self):
+        """Every few-shot example in SKILL.md has a valid gist (non-empty, 1-3 sentences)."""
+        content = self._load_skill_content()
+        examples = self._extract_json_examples(content)
+        self.assertGreaterEqual(len(examples), 4)
+        for i, example in enumerate(examples):
+            with self.subTest(example_index=i):
+                self.assertIn("gist", example, f"Example {i} missing 'gist' key")
+                self.assertTrue(
+                    validate_gist(example["gist"]),
+                    f"Example {i} gist failed validation: {example['gist']!r}",
+                )
+
+    def test_all_examples_have_needs_review_key(self):
+        """Every few-shot example in SKILL.md has a 'needs_review' key."""
+        content = self._load_skill_content()
+        examples = self._extract_json_examples(content)
+        self.assertGreaterEqual(len(examples), 4)
+        for i, example in enumerate(examples):
+            with self.subTest(example_index=i):
+                self.assertIn(
+                    "needs_review",
+                    example,
+                    f"Example {i} missing 'needs_review' key",
+                )
+
+    def test_low_signal_tag_in_skill(self):
+        """SKILL.md contains the string 'low-signal' (edge-case tag per D-06)."""
+        content = self._load_skill_content()
+        self.assertIn(
+            "low-signal",
+            content,
+            "SKILL.md must contain 'low-signal' (kebab-case) for D-06 edge-case tag instruction. "
+            "Check the tags rule section in Step 2c.",
+        )
+
+    def test_multi_topic_tag_in_skill(self):
+        """SKILL.md contains the string 'multi-topic' (edge-case tag per D-07)."""
+        content = self._load_skill_content()
+        self.assertIn(
+            "multi-topic",
+            content,
+            "SKILL.md must contain 'multi-topic' (kebab-case) for D-07 edge-case tag instruction. "
+            "Check the tags rule section in Step 2c.",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
