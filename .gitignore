@@ -4,3 +4,5 @@ CLAUDE.local.md
 .claude/.DS_Store
 .claude/skills/.DS_Store
 exports/
+__pycache__/
+*.pyc
