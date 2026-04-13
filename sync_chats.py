@@ -26,7 +26,9 @@ __version__ = "1.0.0"
 CLAUDE_CHAT_HOME = Path(os.environ.get("CLAUDE_CHAT_HOME", str(Path.home() / ".claude-chat")))
 
 # Projects dir: where Claude Code stores sessions as JSONL files (one UUID.jsonl per session)
-PROJECTS_DIR = Path.home() / ".claude" / "projects"
+# CLAUDE_PROJECTS_DIR env var override allows tests (and the canary script) to point at a
+# fake projects directory without touching real ~/.claude/projects/ (consistent with D-29).
+PROJECTS_DIR = Path(os.environ.get("CLAUDE_PROJECTS_DIR", str(Path.home() / ".claude" / "projects")))
 
 # All sync_chats state lives under CLAUDE_CHAT_HOME — strictly local, never iCloud (D-23)
 CONFIG_PATH = CLAUDE_CHAT_HOME / "config.json"
@@ -536,11 +538,16 @@ def _get_markdown_body(session_id: str) -> str:
     unimportable by Python's import system. The subprocess boundary is intentional and
     enforced by the filename (see INTEGRATIONS.md).
     """
-    # Look for claude-chat.py relative to this script first (deployed-side-by-side case),
-    # then fall back to current working directory (development case)
-    claude_chat_path = Path(__file__).resolve().parent / "claude-chat.py"
-    if not claude_chat_path.exists():
-        claude_chat_path = Path.cwd() / "claude-chat.py"
+    # SYNC_CHATS_CLAUDE_CLI env var lets tests (and the canary script) point at a mock
+    # instead of the real claude-chat.py — same pattern as CLAUDE_CHAT_HOME override (D-29).
+    # Production path: claude-chat.py side-by-side with this script, falling back to cwd.
+    _cli_override = os.environ.get("SYNC_CHATS_CLAUDE_CLI")
+    if _cli_override:
+        claude_chat_path = Path(_cli_override)
+    else:
+        claude_chat_path = Path(__file__).resolve().parent / "claude-chat.py"
+        if not claude_chat_path.exists():
+            claude_chat_path = Path.cwd() / "claude-chat.py"
 
     try:
         result = subprocess.run(
