@@ -854,22 +854,19 @@ def extract_session_metadata(jsonl_path: Path) -> dict:
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Session date from timestamp format variations**
+1. **Session date from timestamp format variations** — RESOLVED: Plan 02 implements try/except + mtime fallback in `_get_session_date`
    - What we know: Format is `"2026-03-19T23:47:22.059Z"` (millisecond precision, Z suffix)
-   - What's unclear: Whether older sessions might use a different timestamp format (seconds only, no Z, etc.)
-   - Recommendation: Wrap timestamp parsing in try/except with mtime fallback; log a warning if parsing fails
+   - Resolution: Wrap timestamp parsing in try/except with mtime fallback; log a warning if parsing fails
 
-2. **100-byte minimum file size filter**
-   - What we know: `claude-chat.py` skips files `<= 100` bytes. Phase 1 scanner should match.
-   - What's unclear: Whether 100 bytes is the right threshold for empty sessions given Claude Code's JSONL structure
-   - Recommendation: Match claude-chat.py's threshold exactly (100 bytes) for behavioral consistency
+2. **100-byte minimum file size filter** — RESOLVED: Not required by any CORE requirement; plan omits it
+   - What we know: `claude-chat.py` skips files `<= 100` bytes.
+   - Resolution: No CORE requirement mandates this filter. Can be added later if needed.
 
-3. **`claude-chat.py` path discovery in `sync_chats.py`**
+3. **`claude-chat.py` path discovery in `sync_chats.py`** — RESOLVED: Plan 03 uses `SYNC_CHATS_CLAUDE_CLI` env var + relative path lookup
    - What we know: `sync_chats.py` will be at `~/.claude-chat/sync_chats.py`; `claude-chat.py` is at an unknown location per user
-   - What's unclear: How to locate `claude-chat.py` reliably for the subprocess call
-   - Recommendation: Store `claude_chat_path` in `config.json` (added to `init` flags); or hardcode `~/Documents/Projects/Python/claude-chat/claude-chat.py` as a discoverable default with a config override
+   - Resolution: `SYNC_CHATS_CLAUDE_CLI` env var override + `Path(__file__).parent / "claude-chat.py"` relative path resolution
 
 ---
 
