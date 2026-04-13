@@ -37,7 +37,14 @@ Five phases, derived from the research-synthesis convergence (SUMMARY.md §5) an
 7. User runs `python3 claude-chat.py export <session_id> --format markdown --stdout` and rendered markdown flows to stdout without touching disk; omitting `--stdout` preserves the existing file-writing behavior.
 8. User runs `python3 ~/.claude-chat/sync_chats.py status` and sees machine label, last run timestamp, synced count, and pending count.
 9. The Phase 1 `protect` audit is documented: either `cmd_protect()` is confirmed to scrub content (and the path the pipeline will call is recorded), or a backwards-compatible `protect --scrub-content` stdin/stdout mode has been added to `claude-chat.py`.
-   **Plans**: TBD
+   **Plans:** 4 plans
+
+Plans:
+
+- [ ] 01-01-PLAN.md — Add export --stdout to claude-chat.py + protect audit doc
+- [ ] 01-02-PLAN.md — Create sync_chats.py with init, scan, and all pure functions
+- [ ] 01-03-PLAN.md — Write pipeline with 3-layer clobber defense + status subcommand
+- [ ] 01-04-PLAN.md — Unit tests + end-to-end canary script
 
 ### Phase 2: SKILL.md + AI Labeling
 
@@ -108,7 +115,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase                                                         | Plans Complete | Status      | Completed |
 | ------------------------------------------------------------- | -------------- | ----------- | --------- |
-| 1. Scanner + State + Stub-Label Write Pipeline                | 0/TBD          | Not started | -         |
+| 1. Scanner + State + Stub-Label Write Pipeline                | 0/4            | Planning    | -         |
 | 2. SKILL.md + AI Labeling                                     | 0/TBD          | Not started | -         |
 | 3. PII Scrub Integration + Crash Safety Polish                | 0/TBD          | Not started | -         |
 | 4. MemPalace Bulk-Mine Integration                            | 0/TBD          | Not started | -         |
