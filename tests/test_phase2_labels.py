@@ -516,6 +516,22 @@ class TestStubFallback(unittest.TestCase):
         self.assertIsInstance(label["title"], str)
         self.assertTrue(label["title"].strip())
 
+    def test_stub_gist_and_score_are_none(self):
+        """Stub label intentionally has gist=None and coherence_score=None.
+
+        Stubs are produced only when AI labeling fails (D-08). They are flagged
+        with needs_review=True for manual follow-up. gist and coherence_score
+        are left None and will fail the full content validators — this is by design.
+        """
+        import pathlib
+
+        label = sync_chats.make_stub_label(pathlib.Path(SHORT_SESSION), SHORT_SESSION_ID)
+        self.assertIsNone(label["gist"])
+        self.assertIsNone(label["coherence_score"])
+        # Confirm they fail the content validators (expected for stubs)
+        self.assertFalse(validate_gist(label["gist"]))
+        self.assertFalse(validate_coherence_score(label["coherence_score"]))
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TestEdgeCases — count_user_messages() and should_skip_session() edge cases
