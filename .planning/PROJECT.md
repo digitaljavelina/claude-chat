@@ -32,10 +32,10 @@ If everything else fails, this must work: chats flow into `~/.../Documents/Chats
 
 <!-- Scope for the current milestone: the `/sync-chats` Claude Code skill. -->
 
-- [ ] **Claude Code skill `/sync-chats`** — invokable from any Claude Code session, wraps `claude-chat.py`, orchestrates the full sync pipeline
+- [x] **Claude Code skill `/sync-chats`** — invokable from any Claude Code session, wraps `claude-chat.py`, orchestrates the full sync pipeline _(Validated in Phase 2: SKILL.md + AI Labeling)_
 - [ ] **Stdlib helper `sync_chats.py`** — deterministic Python helper at `~/.claude-chat/sync_chats.py`. Owns scan/state/atomic-write/filename mechanics. Never calls Claude or MCP. Subcommands: `scan`, `init`, `write`, `status`, `log`.
 - [ ] **Delta-sync scanner** — detect sessions in `~/.claude/projects/` that are new or updated since the last sync cursor (mtime+size cheap path, hash slow path)
-- [ ] **AI-generated labels** — for each session, Claude produces a short title (≤10 words), a 2–3 sentence gist, and 3–5 topical tags. Generated AFTER PII scrub, never before.
+- [x] **AI-generated labels** — for each session, Claude produces a short title (≤10 words), a 2–3 sentence gist, and 3–5 topical tags. Generated AFTER PII scrub, never before. _(Validated in Phase 2: SKILL.md + AI Labeling)_
 - [ ] **PII scrub before label** — chat content is scrubbed (general credentials, tokens, emails, IPs) BEFORE any label is generated, so titles and tags can never leak unscrubbed content into frontmatter. Locked ordering: `scrub → label → write`. Verified by canary test.
 - [ ] **Obsidian-shaped markdown writer** — files named `<machine>--YYYY-MM-DD--<slug>.md` with YAML frontmatter (title, gist, tags as YAML list, project, session_id, model, token_count, msg_count, machine, hostname, synced_at ISO, needs_review, auto_label_hash sentinel)
 - [ ] **Per-machine config** — `~/.claude-chat/config.json` stores the machine short label, set on first run via `/sync-chats --set-label <name>`
@@ -148,4 +148,4 @@ This document evolves at phase transitions and milestone boundaries.
 
 ---
 
-_Last updated: 2026-04-13 after Phase 1 completion — sync_chats.py (985 lines) with init/scan/write/status subcommands, 3-layer clobber defense, export --stdout bridge, protect audit documented, 35 unit tests + 9-criteria canary all passing_
+_Last updated: 2026-04-13 after Phase 2 completion — `/sync-chats` skill at `~/.claude/skills/sync-chats/SKILL.md` with full scan → per-session label → write orchestration, 4 few-shot examples, kebab-case `low-signal`/`multi-topic` tags, `make_stub_label` fallback, `json.dumps()` pipe safety. 97 tests passing (62 Phase 2 + 35 Phase 1). E2E verified live in a Claude Code session._
