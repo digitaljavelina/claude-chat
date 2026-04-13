@@ -511,6 +511,26 @@ def cmd_export(args):
         return
 
     session.parse()
+
+    # --stdout: render to stdout instead of writing a file.
+    # Used by sync_chats.py to get rendered markdown via subprocess without
+    # touching disk. Only supported in single-session mode (not --all).
+    if getattr(args, "stdout", False):
+        fmt = args.format or "md"
+        if fmt == "md":
+            content = export_markdown(session)
+        elif fmt == "html":
+            content = export_html(session, rich=getattr(args, "rich", False))
+        elif fmt == "txt":
+            content = export_txt(session)
+        elif fmt == "tex":
+            content = export_tex(session)
+        else:
+            print(f"Unknown format: {fmt}", file=sys.stderr)
+            sys.exit(1)
+        sys.stdout.write(content)
+        return
+
     out_path = _export_session(session, fmt, out_dir, rich=rich)
     if out_path:
         print(f"Exported to: {out_path}")
@@ -1545,6 +1565,7 @@ Examples:
     p.add_argument("--output", "-o", help="Output directory")
     p.add_argument("--open", action="store_true", help="Open in browser/editor after export")
     p.add_argument("--rich", action="store_true", help="Rich HTML: clickable links, KaTeX math, tables")
+    p.add_argument("--stdout", action="store_true", help="Write rendered output to stdout instead of a file")
 
     # backup
     p = sub.add_parser("backup", help="Backup session files")
