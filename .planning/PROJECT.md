@@ -148,4 +148,4 @@ This document evolves at phase transitions and milestone boundaries.
 
 ---
 
-_Last updated: 2026-04-10 after research synthesis — locked headless-path resolution (SessionEnd hook), MemPalace bulk-mine simplification, scrub-order, three-layer clobber defense, dropped clinical PII scope_
+_Last updated: 2026-04-13 after Phase 1 completion — sync_chats.py (985 lines) with init/scan/write/status subcommands, 3-layer clobber defense, export --stdout bridge, protect audit documented, 35 unit tests + 9-criteria canary all passing_
