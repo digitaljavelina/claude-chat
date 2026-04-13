@@ -59,8 +59,13 @@ Plans:
 4. User runs `/sync-chats` against a session that is <500 characters and the skill skips it entirely (no file written); user runs it against a mostly-tool-call session and the resulting file has a `low_signal` tag; against a clearly multi-topic session, a `multi_topic` tag.
 5. User simulates a malformed JSON label response and the skill falls back to the Phase 1 stub label (`title = first 8 words of first user message`) and still writes the file — the run never crashes.
 6. The skill file at `~/.claude/skills/sync-chats/SKILL.md` has the correct frontmatter (`name`, `description`, `disable-model-invocation: true`, `allowed-tools` whitelist, `argument-hint`) and is discoverable by Claude Code.
-   **Plans**: TBD
-   **UI hint**: no
+   **Plans:** 3 plans
+
+Plans:
+
+- [ ] 02-01-PLAN.md — Create SKILL.md with frontmatter + test scaffolding and fixtures
+- [ ] 02-02-PLAN.md — Write production labeling prompt with few-shot examples
+- [ ] 02-03-PLAN.md — Edge-case tests + end-to-end skill verification
 
 ### Phase 3: PII Scrub Integration + Crash Safety Polish
 
@@ -115,8 +120,8 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase                                                         | Plans Complete | Status      | Completed |
 | ------------------------------------------------------------- | -------------- | ----------- | --------- |
-| 1. Scanner + State + Stub-Label Write Pipeline                | 0/4            | Planning    | -         |
-| 2. SKILL.md + AI Labeling                                     | 0/TBD          | Not started | -         |
+| 1. Scanner + State + Stub-Label Write Pipeline                | 4/4            | Complete    | -         |
+| 2. SKILL.md + AI Labeling                                     | 0/3            | Planning    | -         |
 | 3. PII Scrub Integration + Crash Safety Polish                | 0/TBD          | Not started | -         |
 | 4. MemPalace Bulk-Mine Integration                            | 0/TBD          | Not started | -         |
 | 5. SessionEnd Hook + Observability + Multi-Machine Onboarding | 0/TBD          | Not started | -         |
