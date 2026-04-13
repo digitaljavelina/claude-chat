@@ -503,6 +503,152 @@ def _extract_session_metadata(jsonl_path: Path) -> dict:
     }
 
 
+# ─── Write Pipeline Helpers ───────────────────────────────────────────────────
+
+
+def _write_if_not_exists(path: Path, content_bytes: bytes) -> bool:
+    """Write bytes to path only if it does not already exist. Returns True if written.
+
+    # O_CREAT|O_EXCL is atomic on POSIX -- no race between check and create
+    # This is clobber defense layer 2: even if state.json is lost, we never overwrite an
+    # existing vault file. os.O_EXCL guarantees the open() fails if the file already exists.
+    """
+    try:
+        # O_CREAT: create the file; O_EXCL: fail if it already exists (atomic check+create)
+        # 0o644: owner read+write, group+others read — standard file permissions
+        fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    except OSError as e:
+        if e.errno == errno.EEXIST:
+            return False  # file already exists -- clobber defense layer 2
+        raise
+    try:
+        os.write(fd, content_bytes)
+        os.fsync(fd)  # flush to disk before close — durability across power loss
+    finally:
+        os.close(fd)
+    return True
+
+
+def _get_markdown_body(session_id: str) -> str:
+    """Call claude-chat.py export --format md --stdout and return the rendered markdown.
+
+    Why subprocess instead of import? claude-chat.py contains a hyphen, which makes it
+    unimportable by Python's import system. The subprocess boundary is intentional and
+    enforced by the filename (see INTEGRATIONS.md).
+    """
+    # Look for claude-chat.py relative to this script first (deployed-side-by-side case),
+    # then fall back to current working directory (development case)
+    claude_chat_path = Path(__file__).resolve().parent / "claude-chat.py"
+    if not claude_chat_path.exists():
+        claude_chat_path = Path.cwd() / "claude-chat.py"
+
+    try:
+        result = subprocess.run(
+            ["python3", str(claude_chat_path), "export", session_id, "--format", "md", "--stdout"],
+            capture_output=True,  # capture stdout and stderr separately (no terminal output)
+            text=True,  # decode bytes to str using system encoding
+            check=True,  # raise CalledProcessError on non-zero exit code
+        )
+        return result.stdout
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"Export failed for session {session_id}: {e}\nstderr: {e.stderr}") from e
+
+
+def _read_auto_label_hash(vault_file: Path) -> "str | None":
+    """Read the auto_label_hash value from an existing vault file's frontmatter.
+
+    Used for crash reconciliation (D-25): if the process crashed after writing the file
+    but before updating state.json, we re-derive the expected hash and compare to the
+    stored hash to confirm the file is the one we would have written.
+    """
+    try:
+        with open(vault_file, "r", encoding="utf-8", errors="replace") as f:
+            in_frontmatter = False
+            delimiter_count = 0
+            for i, line in enumerate(f):
+                if i >= 30:  # only scan first 30 lines (frontmatter is always near top)
+                    break
+                stripped = line.strip()
+                if stripped == "---":
+                    delimiter_count += 1
+                    in_frontmatter = delimiter_count == 1
+                    if delimiter_count == 2:
+                        break  # past frontmatter — stop looking
+                    continue
+                if in_frontmatter and stripped.startswith("auto_label_hash:"):
+                    # Extract value after "auto_label_hash: "
+                    parts = stripped.split(":", 1)
+                    if len(parts) == 2:
+                        return parts[1].strip()
+    except (IOError, OSError):
+        pass
+    return None
+
+
+def _reconcile_crash(vault_file: Path, body_bytes: bytes, session_id: str, state: dict, fingerprint: dict) -> str:
+    """Handle the case where vault file exists but state.json doesn't know about it.
+
+    Per D-25: if the process crashed between writing the vault file and updating state,
+    we compare the auto_label_hash to verify it's the same content we would have written.
+    Returns "reconciled" if hashes match (safe to update state), "collision" if they differ.
+    """
+    # Re-derive the hash we would compute for this session's body bytes
+    expected_hash = hashlib.sha256(body_bytes).hexdigest()
+    existing_hash = _read_auto_label_hash(vault_file)
+
+    if existing_hash and expected_hash == existing_hash:
+        # Crash recovery: the file is exactly what we would have written — update state
+        if session_id not in state["synced_session_ids"]:
+            state["synced_session_ids"].append(session_id)
+        state["fingerprints"][session_id] = fingerprint
+        save_state(state)
+        return "reconciled"
+
+    # Hashes differ: either a genuine slug collision or user-edited the file
+    return "collision"
+
+
+def _log_sync(message: str) -> None:
+    """Append a timestamped line to sync.log (D-33).
+
+    Log is append-only; no rotation in Phase 1. For personal use, this file is
+    unlikely to grow past a few MB. cat ~/.claude-chat/sync.log to inspect.
+    """
+    # Create the parent directory if it doesn't exist (first run before init creates it)
+    os.makedirs(str(LOG_PATH.parent), exist_ok=True)
+    with open(LOG_PATH, "a", encoding="utf-8") as f:
+        # ISO 8601 timestamp + space + message + newline
+        f.write(f"{datetime.now(timezone.utc).isoformat()} {message}\n")
+
+
+def _resolve_vault_filename(config: dict, label: dict, session_date: str, session_id: str) -> Path:
+    """Build the target vault Path for a session, handling filename collisions (D-13/D-15).
+
+    Filename convention: <machine>--YYYY-MM-DD--<slug>.md (per D-13)
+    Collision handling: if target exists, try -2, -3, ... up to -99 (per D-15)
+    """
+    slug = make_slug(label["title"], session_id)
+    machine = config["machine_label"]
+    base_name = f"{machine}--{session_date}--{slug}.md"
+
+    # Chats/ subfolder in vault — create if needed (exist_ok: safe to call repeatedly)
+    vault_dir = Path(config["vault_path"]) / "Chats"
+    os.makedirs(str(vault_dir), exist_ok=True)
+
+    target = vault_dir / base_name
+
+    # Per D-15: if the base name is already taken, try -2, -3, ... -99
+    # This handles the (rare) case of two different sessions producing the same slug on the same date
+    if target.exists():
+        for i in range(2, 100):
+            candidate = vault_dir / f"{machine}--{session_date}--{slug}-{i}.md"
+            if not candidate.exists():
+                target = candidate
+                break
+
+    return target
+
+
 # ─── Commands ─────────────────────────────────────────────────────────────────
 
 
@@ -583,9 +729,159 @@ def cmd_scan(args) -> None:
 
 
 def cmd_write(args) -> None:
-    """Write a session to the Obsidian vault. (Not yet implemented — Plan 03)"""
-    print("Not yet implemented. Coming in Plan 03.", file=sys.stderr)
-    sys.exit(1)
+    """Write a single session to the Obsidian vault.
+
+    Full pipeline per D-24:
+      1. Require config (abort if not initialized)
+      2. Read label JSON from stdin (D-01/D-02)
+      3. Check clobber defense layer 1 (synced_session_ids)
+      4. Locate JSONL file, get session date and metadata
+      5. Get markdown body via subprocess to claude-chat.py export --stdout
+      6. Build frontmatter with all 14 fields including auto_label_hash
+      7. Write via O_CREAT|O_EXCL (clobber defense layer 2)
+      8. If file exists: reconcile or refuse (clobber defense layer 3)
+      9. Update state atomically per-session
+    """
+    config = _require_config()
+    state = load_state()
+
+    # Step 2: Read label JSON from stdin only — no --stub flag, no --title flag (D-01/D-03)
+    # The Phase 1 stub generator pipes through this same path, just like Phase 2 will
+    label_input = sys.stdin.read()
+    try:
+        label = json.loads(label_input)
+    except json.JSONDecodeError as e:
+        print(f"Error: invalid label JSON on stdin: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # Validate required "title" field (D-02): missing title is a fatal error
+    if "title" not in label:
+        print("Error: label JSON must contain a 'title' field.", file=sys.stderr)
+        sys.exit(1)
+
+    # Step 3: Clobber defense layer 1 — check synced_session_ids (CORE-08)
+    # This is the primary guard: if we've already synced this session, skip immediately
+    if args.session_id in state.get("synced_session_ids", []):
+        _log_sync(f"Synced 0 new, 1 skipped (already synced), 0 failed.")
+        print("skipped: already_synced")
+        return  # exit 0
+
+    # Steps 4–9 are wrapped per D-30: any exception during write is caught + reported
+    try:
+        # Step 4a: Locate the JSONL file for this session_id
+        # Walk PROJECTS_DIR and find the file whose stem matches the session UUID
+        jsonl_path = None
+        try:
+            for candidate in PROJECTS_DIR.rglob("*.jsonl"):
+                if candidate.stem == args.session_id:
+                    # Only consider depth=2 files (top-level sessions, not subagents)
+                    try:
+                        rel_parts = candidate.relative_to(PROJECTS_DIR).parts
+                    except ValueError:
+                        continue
+                    if len(rel_parts) == 2:
+                        jsonl_path = candidate
+                        break
+        except (OSError, FileNotFoundError):
+            pass
+
+        if jsonl_path is None:
+            print(f"Error: session {args.session_id} not found in {PROJECTS_DIR}", file=sys.stderr)
+            sys.exit(1)
+
+        # Step 4b: Get session date from JSONL (not mtime — mtime can drift from backups)
+        session_date = _get_session_date(jsonl_path)
+
+        # Step 5: Get markdown body via subprocess to claude-chat.py (CORE-11 bridge)
+        body = _get_markdown_body(args.session_id)
+
+        # Step 4c: Extract session metadata (model, token_count, msg_count)
+        metadata = _extract_session_metadata(jsonl_path)
+
+        # Step 6a: Compute auto_label_hash = sha256 of body bytes only (not frontmatter)
+        # Hashing only the body makes crash reconciliation simple: re-render body, hash, compare
+        body_bytes = body.encode("utf-8")
+        auto_label_hash = hashlib.sha256(body_bytes).hexdigest()
+
+        # Step 6b: Build frontmatter fields dict (all 14 fields per CORE-07)
+        # Fields come from four sources: label (stdin), metadata (JSONL), config, computed
+        fields = {
+            # From label (stdin) — D-02 schema
+            "title": label["title"],
+            "gist": label.get("gist"),
+            "tags": label.get("tags", ["stub"]),
+            "coherence_score": label.get("coherence_score"),
+            "needs_review": label.get("needs_review", True),
+            # From session metadata (JSONL)
+            "model": metadata["model"],
+            "token_count": metadata["token_count"],
+            "msg_count": metadata["msg_count"],
+            # From config
+            "machine": config["machine_label"],
+            # Computed
+            "project": jsonl_path.parent.name,
+            "session_id": args.session_id,
+            "hostname": socket.gethostname(),
+            "synced_at": datetime.now(timezone.utc).isoformat(),
+            "auto_label_hash": auto_label_hash,
+        }
+
+        # Step 6c: Render frontmatter string
+        frontmatter_str = emit_frontmatter(fields)
+
+        # Step 6d: Build final content: frontmatter + blank line + body
+        # The blank line between frontmatter and body is standard Obsidian convention
+        final_bytes = (frontmatter_str + "\n" + body).encode("utf-8")
+
+        # Step 7: Resolve target vault filename (handles slug collision per D-15)
+        target = _resolve_vault_filename(config, label, session_date, args.session_id)
+
+        # Step 8: Clobber defense layer 2 — O_CREAT|O_EXCL atomic create (CORE-09)
+        written = _write_if_not_exists(target, final_bytes)
+
+        if not written:
+            # File already exists — run crash reconciliation (D-25 / clobber layer 3)
+            fingerprint = {
+                "mtime": jsonl_path.stat().st_mtime,
+                "size": jsonl_path.stat().st_size,
+            }
+            result = _reconcile_crash(target, body_bytes, args.session_id, state, fingerprint)
+            if result == "reconciled":
+                _log_sync(f"Synced 0 new, 1 skipped (already synced), 0 failed.")
+                print("skipped: already_synced (recovered from interrupted write)")
+                return
+            else:
+                # Genuine collision or user-edited file — refuse and ask for manual review
+                print(
+                    f"Error: File already exists and content differs: {target}\n"
+                    "Manual review needed. Delete the existing file to force a re-write.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+
+        # Step 9: Update state atomically per-session (D-26)
+        # Do this immediately after each write — crash-safe even if later sessions fail
+        state["synced_session_ids"].append(args.session_id)
+        state["fingerprints"][args.session_id] = {
+            "mtime": jsonl_path.stat().st_mtime,
+            "size": jsonl_path.stat().st_size,
+        }
+        state["last_run_at"] = datetime.now(timezone.utc).isoformat()
+        save_state(state)
+
+        _log_sync(f"wrote {target.name} for session {args.session_id[:8]}")
+        _log_sync(f"Synced 1 new, 0 skipped (already synced), 0 failed.")
+        print(f"Wrote: {target}")
+
+    except SystemExit:
+        raise  # let sys.exit() pass through
+    except Exception as e:
+        # Per D-30: catch all exceptions, print useful error, exit 1
+        print(
+            f"Error writing session {args.session_id}: {type(e).__name__}: {e}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
 
 def cmd_status(args) -> None:
