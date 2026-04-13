@@ -666,39 +666,13 @@ class TestFixtures(unittest.TestCase):
     def _count_user_messages(self, jsonl_path: str) -> int:
         """Count user messages in a JSONL file, handling both content formats.
 
-        Skips:
-          - Non-user roles
-          - Messages where content contains '<system-reminder>'
-          - Messages where content is 5 or fewer characters (too short to be
-            meaningful — mirrors the filter in extract_first_user_message)
+        Delegates to the module-level count_user_messages() so there is only
+        one implementation to maintain. The module-level version also handles
+        OSError/IOError gracefully (returns 0 rather than crashing the test).
         """
-        count = 0
-        with open(jsonl_path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    obj = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                msg = obj.get("message", obj)
-                if msg.get("role") != "user":
-                    continue
-                content = msg.get("content", "")
-                if isinstance(content, str):
-                    text = content.strip()
-                elif isinstance(content, list):
-                    text = " ".join(
-                        b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"
-                    ).strip()
-                else:
-                    text = ""
-                if "<system-reminder>" in text:
-                    continue
-                if len(text) > 5:
-                    count += 1
-        return count
+        # Delegate to the shared module-level function so there is only one
+        # implementation to maintain.
+        return count_user_messages(jsonl_path)
 
     def test_short_session_fixture_has_one_user_message(self):
         """short_session.jsonl has exactly 1 user message.
