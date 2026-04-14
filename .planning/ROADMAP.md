@@ -15,7 +15,7 @@ Five phases, derived from the research-synthesis convergence (SUMMARY.md §5) an
 
 - [ ] **Phase 1: Scanner + State + Stub-Label Write Pipeline** - Deterministic delta-sync, atomic state, file-exists defense, stub labels, `protect` audit
 - [ ] **Phase 2: SKILL.md + AI Labeling** - Claude Code skill with Claude-generated titles/gists/tags replacing stubs
-- [x] **Phase 3: PII Scrub Integration + Crash Safety Polish** - Locked scrub ordering, canary CI gate, `auto_label_hash` sentinel (completed 2026-04-14)
+- [ ] **Phase 3: PII Scrub Integration + Crash Safety Polish** - Locked scrub ordering, canary CI gate, `auto_label_hash` sentinel
 - [ ] **Phase 4: MemPalace Bulk-Mine Integration** - Post-run shell-out to `mempalace mine --mode convos` with graceful degradation
 - [ ] **Phase 5: SessionEnd Hook + Observability + Multi-Machine Onboarding** - Event-driven scheduling, sync.log, last_run.json, status command, README
 
@@ -80,15 +80,15 @@ Plans:
 4. User inspects the scrub log at `~/.claude-chat/sync.log` after a scrub-heavy run and sees pattern names plus char counts only — zero matched substrings appear in the log.
 5. User manually edits the body of an auto-labeled vault file, re-runs `sync_chats.py write <session_id>`, and the skill refuses to touch the file — the `auto_label_hash` sentinel detects the edit even though state.json still says "synced" and the filename is unchanged (clobber defense layer 3).
 6. Reading the `sync_chats.py write` code path, a reviewer can see that `scrub()` is called before any label JSON is read or generated; the ordering is enforced by function structure, not a comment.
-   **Plans:** 4/4 plans complete
+   **Plans:** 4 plans
    **UI hint**: no
 
 Plans:
 
-- [x] 03-01-PLAN.md — Scrub module + patterns + unit tests (PRIV-02, PRIV-03)
-- [x] 03-02-PLAN.md — Pipeline integration + logging + privacy_review frontmatter (PRIV-01, PRIV-05, PRIV-06)
-- [x] 03-03-PLAN.md — Manual-edit refusal three-way reconcile fix (PRIV-01 crash-safety)
-- [x] 03-04-PLAN.md — Canary fixture + CI workflow + end-to-end scrub canary test (PRIV-04)
+- [ ] 03-01-PLAN.md — Scrub module + patterns + unit tests (PRIV-02, PRIV-03)
+- [ ] 03-02-PLAN.md — Pipeline integration + logging + privacy_review frontmatter (PRIV-01, PRIV-05, PRIV-06)
+- [ ] 03-03-PLAN.md — Manual-edit refusal three-way reconcile fix (PRIV-01 crash-safety)
+- [ ] 03-04-PLAN.md — Canary fixture + CI workflow + end-to-end scrub canary test (PRIV-04)
 
 ### Phase 4: MemPalace Bulk-Mine Integration
 
@@ -100,13 +100,8 @@ Plans:
 1. User runs a sync that writes N new chats to the vault and the pipeline then shells out exactly once to `mempalace mine <vault>/Chats --mode convos --extract general` after the last chat is committed.
 2. User runs the same sync on a Mac where the `mempalace` binary is not on `PATH` and the sync completes successfully with a warning in `sync.log` like `mempalace: command not found — skipping mine`; the vault files are still written.
 3. User reads the sync summary output and sees a line reporting `mempalace_mined: true` / `false` / `skipped` so the MemPalace state of the run is visible at a glance.
-   **Plans**: 3 plans
-
-- [ ] 04-PLAN-01-cmd-mine-subcommand.md — cmd_mine subcommand + Wave 0 test scaffold (MEM-01)
-- [ ] 04-PLAN-02-graceful-degradation.md — Graceful degradation on missing binary / non-zero exit / timeout (MEM-02)
-- [ ] 04-PLAN-03-summary-skill-integration.md — MEM-03 stdout contract + SKILL.md Step 4 wiring
-
-  **UI hint**: no
+   **Plans**: TBD
+   **UI hint**: no
 
 ### Phase 5: SessionEnd Hook + Observability + Multi-Machine Onboarding
 
@@ -130,13 +125,13 @@ Plans:
 **Execution Order:**
 Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
-| Phase                                                         | Plans Complete | Status      | Completed  |
-| ------------------------------------------------------------- | -------------- | ----------- | ---------- |
-| 1. Scanner + State + Stub-Label Write Pipeline                | 4/4            | Complete    | -          |
-| 2. SKILL.md + AI Labeling                                     | 0/3            | Planning    | -          |
-| 3. PII Scrub Integration + Crash Safety Polish                | 4/4            | Complete    | 2026-04-14 |
-| 4. MemPalace Bulk-Mine Integration                            | 0/TBD          | Not started | -          |
-| 5. SessionEnd Hook + Observability + Multi-Machine Onboarding | 0/TBD          | Not started | -          |
+| Phase                                                         | Plans Complete | Status      | Completed |
+| ------------------------------------------------------------- | -------------- | ----------- | --------- |
+| 1. Scanner + State + Stub-Label Write Pipeline                | 4/4            | Complete    | -         |
+| 2. SKILL.md + AI Labeling                                     | 0/3            | Planning    | -         |
+| 3. PII Scrub Integration + Crash Safety Polish                | 0/4            | Planning    | -         |
+| 4. MemPalace Bulk-Mine Integration                            | 0/TBD          | Not started | -         |
+| 5. SessionEnd Hook + Observability + Multi-Machine Onboarding | 0/TBD          | Not started | -         |
 
 ---
 

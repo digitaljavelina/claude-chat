@@ -198,8 +198,26 @@ class TestCmdMineSummary(unittest.TestCase):
     """
 
     def test_true_on_success(self):
-        """MEM-03: summary line reads 'mempalace_mined: true' on success."""
-        self.skipTest("pending 4-03-01")
+        """MEM-03: stdout is exactly `mempalace_mined: true` on rc=0 (sole output line)."""
+        fake_args = argparse.Namespace()
+
+        with patch("sync_chats.shutil.which", return_value="/fake/mempalace"), patch(
+            "sync_chats._require_config",
+            return_value={
+                "vault_path": "/tmp/fake-vault",
+                "machine_label": "t",
+                "schema_version": 1,
+            },
+        ), patch("sync_chats.subprocess.run") as mock_run, patch("sync_chats._log_sync") as mock_log, patch(
+            "builtins.print"
+        ) as mock_print:
+            mock_run.return_value = MagicMock(returncode=0, stdout="ignored stdout", stderr="ignored stderr")
+            sync_chats.cmd_mine(fake_args)
+
+        # Exactly one print call — no diagnostics leak to stdout (Pitfall 3 in RESEARCH).
+        mock_print.assert_called_once_with("mempalace_mined: true")
+        # Success is silent in sync.log per D-11 (no logging on rc=0)
+        mock_log.assert_not_called()
 
     def test_skipped_with_reason(self):
         """MEM-03: summary line includes reason when skipped or false."""
