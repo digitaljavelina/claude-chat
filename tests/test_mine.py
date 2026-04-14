@@ -245,8 +245,22 @@ class TestSkillMineStep(unittest.TestCase):
     """
 
     def test_skill_step4_calls_mine(self):
-        """SKILL.md Step 4 invokes 'python3 sync_chats.py mine' as final step."""
-        self.skipTest("pending 4-03-03")
+        """MEM-03: SKILL.md Step 4 wires cmd_mine into the sync pipeline."""
+        content = _SKILL_PATH.read_text(encoding="utf-8")
+
+        # (a) Step 4 section exists and mentions mine
+        self.assertRegex(content, r"(?mi)^##\s*Step\s*4.*mine")
+
+        # (b) Invocation of sync_chats.py mine
+        self.assertIn("sync_chats.py mine", content)
+
+        # (c) Zero-write skip (D-05) with the exact "no new files" reason string
+        self.assertIn("mempalace_mined: skipped (no new files)", content)
+
+        # (d) Summary append instruction — SKILL must mention appending to the
+        # Step 3 summary (Claude's discretion on exact wording, but "summary" +
+        # content from Step 4 should both appear near each other).
+        self.assertRegex(content, r"(?is)Step\s*4.{0,2000}?summary")
 
 
 if __name__ == "__main__":
