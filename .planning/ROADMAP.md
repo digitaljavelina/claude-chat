@@ -16,7 +16,7 @@ Five phases, derived from the research-synthesis convergence (SUMMARY.md §5) an
 - [ ] **Phase 1: Scanner + State + Stub-Label Write Pipeline** - Deterministic delta-sync, atomic state, file-exists defense, stub labels, `protect` audit
 - [ ] **Phase 2: SKILL.md + AI Labeling** - Claude Code skill with Claude-generated titles/gists/tags replacing stubs
 - [x] **Phase 3: PII Scrub Integration + Crash Safety Polish** - Locked scrub ordering, canary CI gate, `auto_label_hash` sentinel (completed 2026-04-14)
-- [ ] **Phase 4: MemPalace Bulk-Mine Integration** - Post-run shell-out to `mempalace mine --mode convos` with graceful degradation
+- [x] **Phase 4: MemPalace Bulk-Mine Integration** - Post-run shell-out to `mempalace mine --mode convos` with graceful degradation (completed 2026-04-14)
 - [ ] **Phase 5: SessionEnd Hook + Observability + Multi-Machine Onboarding** - Event-driven scheduling, sync.log, last_run.json, status command, README
 
 ## Phase Details
@@ -102,9 +102,9 @@ Plans:
 3. User reads the sync summary output and sees a line reporting `mempalace_mined: true` / `false` / `skipped` so the MemPalace state of the run is visible at a glance.
    **Plans**: 3 plans
 
-- [ ] 04-PLAN-01-cmd-mine-subcommand.md — cmd_mine subcommand + Wave 0 test scaffold (MEM-01)
-- [ ] 04-PLAN-02-graceful-degradation.md — Graceful degradation on missing binary / non-zero exit / timeout (MEM-02)
-- [ ] 04-PLAN-03-summary-skill-integration.md — MEM-03 stdout contract + SKILL.md Step 4 wiring
+- [x] 04-01-PLAN.md — cmd_mine subcommand + Wave 0 test scaffold (MEM-01) ✓ 2026-04-14
+- [x] 04-02-PLAN.md — Graceful degradation on missing binary / non-zero exit / timeout (MEM-02) ✓ 2026-04-14
+- [x] 04-03-PLAN.md — MEM-03 stdout contract + SKILL.md Step 4 wiring ✓ 2026-04-14 (human checkpoint: 825 sessions, `mempalace_mined: true`)
 
   **UI hint**: no
 
