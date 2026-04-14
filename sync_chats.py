@@ -453,6 +453,180 @@ def emit_frontmatter(fields: dict) -> str:
     return "---\n" + "\n".join(lines) + "\n---\n"
 
 
+# ─── PII Scrub ────────────────────────────────────────────────────────────────
+#
+# Pure redaction primitives (Phase 3 Plan 01).
+#
+# Design notes (see .planning/phases/03-.../03-CONTEXT.md):
+#   - Patterns live at module level as compiled regexes — matches existing
+#     idiom (re.compile once, reuse forever) and makes them greppable.
+#   - Order in SCRUB_PATTERNS matters: specific prefixes (jwt, github_token,
+#     aws_key, slack, stripe, anthropic, openai) MUST precede the generic
+#     high-entropy UNCERTAIN_PATTERN fallback so named counts are accurate.
+#   - `anthropic` MUST precede `openai` because `sk-ant-...` would otherwise
+#     be swallowed by the generic `sk-...` OpenAI regex.
+#   - IPv4/IPv6 patterns match broadly; the _is_private_ip() skip-list
+#     (D-10) filters RFC-1918 / loopback / link-local addresses so debug
+#     logs stay useful (threat model = credentials + public identifiers,
+#     not private network topology).
+#   - Replacement format is `<REDACTED:pattern_name>` (D-12) — greppable,
+#     makes post-hoc auditing trivial, never preserves the original bytes.
+#   - scrub_content is NOT yet wired into _get_markdown_body — that wiring
+#     is Plan 03-02's scope. This plan delivers a pure function only.
+
+# Named patterns — high-confidence matches. Order: specific prefixes before generic.
+# Each tuple: (pattern_name, compiled_regex). Names appear in stats dict and in
+# <REDACTED:name> replacement tokens (D-12).
+SCRUB_PATTERNS = [
+    # Email — RFC-5322-ish, case-insensitive (D-09)
+    # matches: user@example.com, user.name+tag@sub.example.co
+    ("email", re.compile(r"[\w.+-]+@[\w.-]+\.[a-z]{2,}", re.IGNORECASE)),
+    # JWT — three base64url segments separated by dots, eyJ prefix (D-09)
+    # MUST come before UNCERTAIN_PATTERN so jwt count is accurate
+    # matches: eyJhbGciOi...eyJzdWIiOi...signature
+    ("jwt", re.compile(r"eyJ[\w-]+\.[\w-]+\.[\w-]+")),
+    # GitHub tokens — 6 variants (D-09). Combined into one regex under one name.
+    # matches: ghp_XXXX..., gho_, ghu_, ghs_, ghr_, github_pat_XXXX...
+    ("github_token", re.compile(r"(?:gh[psuor]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{82,})")),
+    # AWS access keys — D-09
+    # matches: AKIAIOSFODNN7EXAMPLE, ASIA<16 upper/digits>
+    ("aws_key", re.compile(r"(?:AKIA|ASIA)[A-Z0-9]{16}")),
+    # Slack tokens — D-11
+    # matches: xoxb-1234567890-1234567890-<24+ alphanumeric>
+    ("slack", re.compile(r"xox[bpoa]-\d{10,}-\d{10,}-[A-Za-z0-9]{24,}")),
+    # Stripe keys — D-11 (live and test keys; symmetric coverage)
+    # matches: sk_live_XXXX..., sk_test_XXXX...
+    ("stripe", re.compile(r"sk_(?:live|test)_[A-Za-z0-9]{24,}")),
+    # Anthropic keys — D-11. MUST come BEFORE OpenAI pattern (sk-ant-... would
+    # otherwise match the generic sk- OpenAI regex).
+    # matches: sk-ant-api-01-XXXX...
+    ("anthropic", re.compile(r"sk-ant-[A-Za-z0-9_-]{40,}")),
+    # OpenAI keys — D-11. Negative lookahead excludes the sk-ant- prefix so
+    # Anthropic keys are never double-counted.
+    # matches: sk-<40+ alphanumeric>, but NOT sk-ant-<anything>
+    ("openai", re.compile(r"sk-(?!ant-)[A-Za-z0-9]{40,}")),
+    # Bearer tokens — D-09
+    # matches: "Bearer eyJ..." or "Bearer xyz123"
+    ("bearer", re.compile(r"Bearer\s+[A-Za-z0-9_.\-=]+")),
+    # Basic auth — D-09
+    # matches: "Basic dXNlcjpwYXNz" (base64-encoded user:pass)
+    ("basic_auth", re.compile(r"Basic\s+[A-Za-z0-9+/=]+")),
+    # IPv4 — standard dotted quad. Skip-list applied post-match in scrub_content (D-10).
+    # matches: 8.8.8.8, 127.0.0.1 (skip-list filters private ranges)
+    ("ipv4", re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")),
+    # IPv6 — RFC-4291 full and compressed. Skip-list filters link-local/loopback (D-10).
+    # matches: 2001:db8::1, fe80::1 (skip-list filters)
+    ("ipv6", re.compile(r"\b(?:[0-9a-fA-F]{1,4}:){2,7}[0-9a-fA-F]{0,4}\b")),
+    # US phone numbers — D-09
+    # matches: (555) 123-4567, 555-123-4567, 555.123.4567, 5551234567
+    ("phone", re.compile(r"\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}")),
+]
+
+# Uncertain fallback — bare 32+ char high-entropy run (D-06, D-11).
+# MUST run AFTER all named patterns so we only flag truly unknown secrets.
+# Replacements contain `<` and `>` (outside [A-Za-z0-9+/=_-]) which means this
+# pattern cannot re-match already-scrubbed content on the second pass.
+UNCERTAIN_PATTERN = re.compile(r"\b[A-Za-z0-9+/=_-]{32,}\b")
+
+
+def _is_private_ip(s: str) -> bool:
+    """Return True for RFC-1918 private / loopback / link-local IPs (D-10).
+
+    These are preserved unchanged by scrub_content so debug logs stay readable.
+    Threat model is credentials and public identifiers, not private network
+    topology — an attacker seeing "127.0.0.1" or "192.168.1.1" learns nothing.
+    """
+    # IPv4 loopback
+    if s == "127.0.0.1":
+        return True
+    # IPv4 RFC-1918 Class A private range
+    if s.startswith("10."):
+        return True
+    # IPv4 RFC-1918 Class C private range (most home routers)
+    if s.startswith("192.168."):
+        return True
+    # IPv4 link-local (APIPA) — 169.254.0.0/16
+    if s.startswith("169.254."):
+        return True
+    # IPv4 RFC-1918 Class B private range — 172.16.0.0 through 172.31.255.255.
+    # 172.15.x.x and 172.32.x.x are PUBLIC and must still be scrubbed.
+    if s.startswith("172."):
+        try:
+            second = int(s.split(".")[1])
+            if 16 <= second <= 31:
+                return True
+        except (ValueError, IndexError):
+            # Malformed IP — let the caller scrub it rather than preserve.
+            pass
+    # IPv6 loopback
+    if s == "::1":
+        return True
+    # IPv6 link-local (fe80::/10). `.lower()` because IPv6 is case-insensitive.
+    if s.lower().startswith("fe80"):
+        return True
+    return False
+
+
+def scrub_content(body: str) -> "tuple[str, dict]":
+    """Scrub credentials and PII from body text per D-09/D-10/D-11/D-12.
+
+    Returns (scrubbed_text, stats) where stats has the shape:
+        {pattern_name: count for each name in SCRUB_PATTERNS,
+         "uncertain": int,
+         "total_chars_redacted": int}
+
+    All pattern keys are ALWAYS present (0 if no match) so the log-line format
+    in D-21 is stable — callers never KeyError on a zero-count pattern.
+
+    Replacement format: `<REDACTED:pattern_name>` (D-12). Consistent,
+    greppable, never preserves original bytes (PRIV-06).
+
+    This function is pure: no I/O, no globals mutated, no match substrings
+    leak into the returned stats dict (T-03-01-01 mitigation).
+    """
+    # Initialize all counts to 0 so the stats dict has a stable shape (D-21).
+    # Using a dict comprehension keeps the init in lockstep with SCRUB_PATTERNS —
+    # adding a new pattern automatically adds a stats key.
+    stats = {name: 0 for name, _ in SCRUB_PATTERNS}
+    stats["uncertain"] = 0
+    stats["total_chars_redacted"] = 0
+
+    text = body
+
+    # Pass 1: named patterns in SCRUB_PATTERNS order. Specific before generic
+    # ensures jwt/github/aws/slack/stripe/anthropic/openai counts are accurate.
+    for name, pattern in SCRUB_PATTERNS:
+        # Replacement callback closes over `name` via a default-arg binding
+        # (`_name=name`) — this is the stdlib idiom for capturing the CURRENT
+        # loop value into a closure, avoiding the late-binding pitfall where
+        # every closure would otherwise see the last loop value.
+        def _replace(match, _name=name):
+            matched = match.group(0)
+            # IP skip-list: ipv4/ipv6 matches that are private get returned
+            # unchanged so private IPs stay in debug logs (D-10).
+            if _name in ("ipv4", "ipv6") and _is_private_ip(matched):
+                return matched
+            stats[_name] += 1
+            stats["total_chars_redacted"] += len(matched)
+            return f"<REDACTED:{_name}>"
+
+        text = pattern.sub(_replace, text)
+
+    # Pass 2: uncertain fallback — any bare 32+ char high-entropy run that
+    # survived the named patterns (D-06). Running on already-scrubbed text is
+    # safe because replacement tokens contain `<` and `>`, which are outside
+    # the [A-Za-z0-9+/=_-] character class UNCERTAIN_PATTERN requires.
+    def _replace_uncertain(match):
+        matched = match.group(0)
+        stats["uncertain"] += 1
+        stats["total_chars_redacted"] += len(matched)
+        return "<REDACTED:uncertain>"
+
+    text = UNCERTAIN_PATTERN.sub(_replace_uncertain, text)
+
+    return text, stats
+
+
 # ─── JSONL Metadata Extraction ────────────────────────────────────────────────
 
 
