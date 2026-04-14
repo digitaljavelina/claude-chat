@@ -220,8 +220,20 @@ class TestCmdMineSummary(unittest.TestCase):
         mock_log.assert_not_called()
 
     def test_skipped_with_reason(self):
-        """MEM-03: summary line includes reason when skipped or false."""
-        self.skipTest("pending 4-03-02")
+        """MEM-03 / D-15: skipped outcome carries inline reason `(command not found)`."""
+        fake_args = argparse.Namespace()
+
+        with patch("sync_chats.shutil.which", return_value=None), patch(
+            "sync_chats._require_config",
+            return_value={
+                "vault_path": "/tmp/fake-vault",
+                "machine_label": "t",
+                "schema_version": 1,
+            },
+        ), patch("sync_chats._log_sync"), patch("builtins.print") as mock_print:
+            sync_chats.cmd_mine(fake_args)
+
+        mock_print.assert_called_once_with("mempalace_mined: skipped (command not found)")
 
 
 @unittest.skipUnless(_SKILL_PATH.exists(), "SKILL.md not installed on this host")
