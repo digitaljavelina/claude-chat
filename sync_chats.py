@@ -405,6 +405,7 @@ def emit_frontmatter(fields: dict) -> str:
         "tags",
         "coherence_score",
         "needs_review",
+        "privacy_review",  # Phase 3 D-08 — always present, one of clean/scrubbed/uncertain
         "project",
         "session_id",
         "model",
@@ -720,12 +721,22 @@ def _write_if_not_exists(path: Path, content_bytes: bytes) -> bool:
     return True
 
 
-def _get_markdown_body(session_id: str) -> str:
-    """Call claude-chat.py export --format md --stdout and return the rendered markdown.
+def _get_markdown_body(session_id: str) -> "tuple[str, dict]":
+    """Call claude-chat.py export --format md --stdout, scrub, return (body, scrub_stats).
+
+    Structural ordering enforcement (Phase 3 D-03): the raw (unscrubbed) body NEVER
+    escapes this function. The return type is a tuple, which means any caller that
+    accidentally treated it as str would get a TypeError — the pipeline CANNOT
+    regress silently.
 
     Why subprocess instead of import? claude-chat.py contains a hyphen, which makes it
     unimportable by Python's import system. The subprocess boundary is intentional and
     enforced by the filename (see INTEGRATIONS.md).
+
+    Why scrub in here rather than in cmd_write? Function-boundary enforcement of the
+    scrub → label → write ordering (D-04). A reviewer reading cmd_write sees
+    `body, stats = _get_markdown_body(sid)` followed by labeling/hashing/writing —
+    there is no API to get raw content, so labels CANNOT see pre-scrub data.
     """
     # SYNC_CHATS_CLAUDE_CLI env var lets tests (and the canary script) point at a mock
     # instead of the real claude-chat.py — same pattern as CLAUDE_CHAT_HOME override (D-29).
@@ -745,9 +756,63 @@ def _get_markdown_body(session_id: str) -> str:
             text=True,  # decode bytes to str using system encoding
             check=True,  # raise CalledProcessError on non-zero exit code
         )
-        return result.stdout
+        raw_body = result.stdout
     except subprocess.CalledProcessError as e:
         raise RuntimeError(f"Export failed for session {session_id}: {e}\nstderr: {e.stderr}") from e
+
+    # Scrub happens INSIDE this function (D-03) so raw body never escapes.
+    # The returned body is the scrubbed version; auto_label_hash is computed
+    # against it in cmd_write, which means crash reconciliation still works
+    # (D-05: hash is deterministically reproducible from the stored body).
+    scrubbed_body, scrub_stats = scrub_content(raw_body)
+    return scrubbed_body, scrub_stats
+
+
+def _derive_privacy_review(stats: dict) -> str:
+    """Map scrub stats to one of three privacy_review values per D-08.
+
+    Values (always one of these three — field is never omitted):
+      "clean"     — no redactions at all
+      "scrubbed"  — one or more known-pattern hits, zero uncertain hits
+      "uncertain" — at least one high-entropy fallback hit (D-06) — file still
+                    written (fail-open-with-flag per PRIV-05) but needs_review
+                    is forced to true (D-07) so it surfaces in the review queue.
+    """
+    if stats.get("uncertain", 0) > 0:
+        return "uncertain"
+    # Sum all non-bookkeeping counts — every named pattern key contributes
+    named_total = sum(v for k, v in stats.items() if k not in ("uncertain", "total_chars_redacted"))
+    if named_total > 0:
+        return "scrubbed"
+    return "clean"
+
+
+def _log_scrub_stats(session_id: str, stats: dict) -> None:
+    """Emit one scrub log line to sync.log per D-21. Skip if zero scrubs (D-22).
+
+    Log format (D-21, verbatim — any deviation breaks downstream log parsers):
+        scrub session=<short_id> patterns={email:3, jwt:1, ...} total_chars=287
+
+    Safety (PRIV-06): NEVER includes matched substrings. Only pattern names
+    (module constants) and integer counts/char-lengths. Zero-count entries are
+    omitted so the line stays grep-friendly.
+    """
+    # D-22: no log line for clean sessions — reduces noise in sync.log.
+    # The `uncertain` count is user-visible signal, so it IS included in the
+    # named_total check (an uncertain-only hit still warrants a log line).
+    named_total = sum(v for k, v in stats.items() if k != "total_chars_redacted")
+    if named_total == 0:
+        return
+
+    # Short id = first 8 chars of UUID (D-21).
+    short_id = session_id[:8]
+    # Stable key order for grep-friendly logs — sort keys, omit zero counts
+    # (zero counts would add noise; D-21 example shows only non-zero pattern entries).
+    nonzero = {k: v for k, v in stats.items() if k != "total_chars_redacted" and v > 0}
+    # Render {name:count, name:count} with sorted keys for determinism.
+    patterns_str = "{" + ", ".join(f"{k}:{v}" for k, v in sorted(nonzero.items())) + "}"
+    total_chars = stats.get("total_chars_redacted", 0)
+    _log_sync(f"scrub session={short_id} patterns={patterns_str} total_chars={total_chars}")
 
 
 def _read_auto_label_hash(vault_file: Path) -> "str | None":
@@ -982,18 +1047,32 @@ def cmd_write(args) -> None:
         # Step 4b: Get session date from JSONL (not mtime — mtime can drift from backups)
         session_date = _get_session_date(jsonl_path)
 
-        # Step 5: Get markdown body via subprocess to claude-chat.py (CORE-11 bridge)
-        body = _get_markdown_body(args.session_id)
+        # Step 5: Get scrubbed markdown body + scrub stats (D-03 structural enforcement).
+        # _get_markdown_body now returns a tuple — raw body does NOT escape that function.
+        body, scrub_stats = _get_markdown_body(args.session_id)
+
+        # D-21 / D-22: emit one scrub log line per scrubbed session. Skipped for clean sessions.
+        _log_scrub_stats(args.session_id, scrub_stats)
 
         # Step 4c: Extract session metadata (model, token_count, msg_count)
         metadata = _extract_session_metadata(jsonl_path)
 
-        # Step 6a: Compute auto_label_hash = sha256 of body bytes only (not frontmatter)
-        # Hashing only the body makes crash reconciliation simple: re-render body, hash, compare
+        # Step 6a: Compute auto_label_hash = sha256 of body bytes only (not frontmatter).
+        # `body` is the SCRUBBED version (D-05) — crash reconciliation reproduces the same
+        # hash by re-rendering and re-scrubbing, which is deterministic.
         body_bytes = body.encode("utf-8")
         auto_label_hash = hashlib.sha256(body_bytes).hexdigest()
 
-        # Step 6b: Build frontmatter fields dict (all 14 fields per CORE-07)
+        # D-08: derive privacy_review from scrub stats. Always present in frontmatter.
+        privacy_review = _derive_privacy_review(scrub_stats)
+
+        # D-07: force needs_review=true when uncertain, overriding any label value of false.
+        # Fail-open-with-flag (PRIV-05): the chat IS still written, just flagged for audit.
+        needs_review_value = label.get("needs_review", True)
+        if privacy_review == "uncertain":
+            needs_review_value = True
+
+        # Step 6b: Build frontmatter fields dict (all 15 fields with privacy_review)
         # Fields come from four sources: label (stdin), metadata (JSONL), config, computed
         fields = {
             # From label (stdin) — D-02 schema
@@ -1001,7 +1080,9 @@ def cmd_write(args) -> None:
             "gist": label.get("gist"),
             "tags": label.get("tags", ["stub"]),
             "coherence_score": label.get("coherence_score"),
-            "needs_review": label.get("needs_review", True),
+            "needs_review": needs_review_value,
+            # From Phase 3 scrub (D-08)
+            "privacy_review": privacy_review,
             # From session metadata (JSONL)
             "model": metadata["model"],
             "token_count": metadata["token_count"],
