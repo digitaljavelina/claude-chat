@@ -219,6 +219,18 @@ else
     fi
 fi
 
+# ── Phase 3 scrub canary (PRIV-04, D-16) ──────────────────────────────────────
+# Phase 3 added tests/test_scrub_canary.py which is the PRIV-04 acceptance test.
+# Running it from this bash script keeps the success-criteria verification
+# authoritative: if this script passes, ALL phase canaries pass.
+echo ""
+echo "=== Phase 3 scrub canary (PRIV-04) ==="
+if python3 -m unittest tests.test_scrub_canary -v 2>&1 | tail -20; then
+    pass "Phase 3 scrub canary (tests.test_scrub_canary)"
+else
+    fail "Phase 3 scrub canary (tests.test_scrub_canary)"
+fi
+
 # ── Results ───────────────────────────────────────────────────────────────────
 echo ""
 echo "====================================="

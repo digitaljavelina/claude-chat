@@ -1,0 +1,43 @@
+# PRIV-04 / ROADMAP SC#2: canary test runs on every change to scrub or label code.
+#
+# Triggers: push + pull_request, but only when the paths that materially affect
+# scrub/label behavior change. Docs/planning edits don't trigger CI (saves minutes).
+# See .planning/phases/03-pii-scrub-integration-crash-safety-polish/03-CONTEXT.md §D-15.
+#
+# Security note: this workflow uses only fixed commands (no interpolation of
+# untrusted github.event.* inputs into run: blocks), so there is no command
+# injection surface. No secrets are referenced.
+
+name: canary
+
+on:
+  push:
+    paths:
+      - "sync_chats.py"
+      - "scrub*.py"
+      - "tests/**"
+      - ".github/workflows/canary.yml"
+  pull_request:
+    paths:
+      - "sync_chats.py"
+      - "scrub*.py"
+      - "tests/**"
+      - ".github/workflows/canary.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run full test suite (unit + integration + canary)
+        # Zero-deps invariant: no pip install step, no requirements file.
+        # `unittest discover` picks up every tests/test_*.py module, so the
+        # PRIV-04 canary test is included automatically.
+        run: python3 -m unittest discover tests -v
