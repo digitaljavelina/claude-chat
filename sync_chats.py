@@ -514,9 +514,24 @@ SCRUB_PATTERNS = [
     # IPv4 — standard dotted quad. Skip-list applied post-match in scrub_content (D-10).
     # matches: 8.8.8.8, 127.0.0.1 (skip-list filters private ranges)
     ("ipv4", re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")),
-    # IPv6 — RFC-4291 full and compressed. Skip-list filters link-local/loopback (D-10).
-    # matches: 2001:db8::1, fe80::1 (skip-list filters)
-    ("ipv6", re.compile(r"\b(?:[0-9a-fA-F]{1,4}:){2,7}[0-9a-fA-F]{0,4}\b")),
+    # IPv6 — RFC-4291 full and compressed (:: zero-run compression). Skip-list
+    # filters link-local/loopback in scrub_content (D-10).
+    # The alternation handles (in order): full 8-group form; x::y with groups
+    # on both sides; x:y:...:: trailing zeros; ::x leading zeros; bare ::.
+    # matches: 2001:db8::1, fe80::1, ::1, 2001:0db8:...:0001
+    (
+        "ipv6",
+        re.compile(
+            r"(?:"
+            r"(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}"  # full 8 groups
+            r"|[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4}){0,6}"  # x::y with both sides
+            r"::[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4}){0,6}"
+            r"|(?:[0-9a-fA-F]{1,4}:){1,7}:[0-9a-fA-F]{0,4}"  # x:...:: or x:...::y
+            r"|::[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4}){0,6}"  # ::x or ::x:y
+            r"|::"  # bare :: (unspecified)
+            r")"
+        ),
+    ),
     # US phone numbers — D-09
     # matches: (555) 123-4567, 555-123-4567, 555.123.4567, 5551234567
     ("phone", re.compile(r"\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}")),
