@@ -1281,9 +1281,11 @@ def cmd_mine(args) -> None:
     vault_chats = str(Path(config["vault_path"]) / "Chats")
 
     # D-08: binary-not-found handling. shutil.which() searches PATH for the
-    # binary, returning its full path or None if not found. Plan 02 will add
-    # _log_sync logging; for now just print the skipped outcome.
+    # binary, returning its full path or None if not found.
+    # T-4-02 mitigation: graceful degradation — second Mac without mempalace
+    # installed still completes sync; vault writes succeed regardless (MEM-02).
     if shutil.which("mempalace") is None:
+        _log_sync("mempalace: command not found — skipping mine")
         print("mempalace_mined: skipped (command not found)")
         return
 

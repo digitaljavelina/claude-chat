@@ -15,6 +15,7 @@ a test as pending without failing the suite.
 
 import argparse
 import os
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -109,8 +110,30 @@ class TestCmdMineGracefulDeg(unittest.TestCase):
     """
 
     def test_binary_absent_skipped(self):
-        """MEM-02: cmd_mine prints skipped when mempalace is not installed."""
-        self.skipTest("pending 4-02-01")
+        """MEM-02: binary-not-found → exit 0, skipped outcome, sync.log warning, no subprocess call."""
+        fake_args = argparse.Namespace()
+
+        with patch("sync_chats.shutil.which", return_value=None), patch(
+            "sync_chats._require_config",
+            return_value={
+                "vault_path": "/tmp/fake-vault",
+                "machine_label": "t",
+                "schema_version": 1,
+            },
+        ), patch("sync_chats._log_sync") as mock_log, patch("sync_chats.subprocess.run") as mock_run, patch(
+            "builtins.print"
+        ) as mock_print:
+            sync_chats.cmd_mine(fake_args)
+
+        # No subprocess invocation when binary is absent
+        mock_run.assert_not_called()
+        # Exact stdout format (D-14/D-15)
+        mock_print.assert_called_once_with("mempalace_mined: skipped (command not found)")
+        # Sync log mentions mempalace + not found (exact wording is Claude's discretion per CONTEXT.md)
+        mock_log.assert_called_once()
+        log_msg = mock_log.call_args[0][0]
+        self.assertIn("mempalace", log_msg)
+        self.assertIn("not found", log_msg)
 
     def test_nonzero_exit_false(self):
         """MEM-02: cmd_mine prints false when mempalace exits non-zero."""
