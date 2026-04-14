@@ -166,8 +166,28 @@ class TestCmdMineGracefulDeg(unittest.TestCase):
         self.assertNotIn("err line 9\n", logged)
 
     def test_timeout_false(self):
-        """MEM-02: cmd_mine prints false on TimeoutExpired."""
-        self.skipTest("pending 4-02-03")
+        """MEM-02 / D-09 / T-4-04: TimeoutExpired → false (timeout after 300s), sync.log warning."""
+        fake_args = argparse.Namespace()
+
+        with patch("sync_chats.shutil.which", return_value="/fake/mempalace"), patch(
+            "sync_chats._require_config",
+            return_value={
+                "vault_path": "/tmp/fake-vault",
+                "machine_label": "t",
+                "schema_version": 1,
+            },
+        ), patch(
+            "sync_chats.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd="mempalace", timeout=300),
+        ), patch("sync_chats._log_sync") as mock_log, patch("builtins.print") as mock_print:
+            # Must not raise
+            sync_chats.cmd_mine(fake_args)
+
+        mock_print.assert_called_once_with("mempalace_mined: false (timeout after 300s)")
+        mock_log.assert_called_once()
+        log_msg = mock_log.call_args[0][0]
+        self.assertIn("timed out", log_msg)
+        self.assertIn("300", log_msg)
 
 
 class TestCmdMineSummary(unittest.TestCase):

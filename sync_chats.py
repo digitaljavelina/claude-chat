@@ -1293,12 +1293,20 @@ def cmd_mine(args) -> None:
     # Using a list instead of a shell string means vault_chats metacharacters
     # (spaces, semicolons, etc.) are passed literally to the process, not
     # interpreted by the shell — this prevents command injection.
-    result = subprocess.run(
-        ["mempalace", "mine", vault_chats, "--mode", "convos", "--extract", "general"],
-        capture_output=True,
-        text=True,
-        timeout=300,  # D-09; T-4-04 mitigation (DoS via hung process)
-    )
+    try:
+        result = subprocess.run(
+            ["mempalace", "mine", vault_chats, "--mode", "convos", "--extract", "general"],
+            capture_output=True,
+            text=True,
+            timeout=300,  # D-09; T-4-04 mitigation (DoS via hung process)
+        )
+    except subprocess.TimeoutExpired:
+        # Python beginner note: subprocess.run in Python 3.3+ kills the child
+        # process automatically before raising TimeoutExpired — no manual
+        # process.kill() needed. Verified against Python 3.14 in RESEARCH.md.
+        _log_sync("mempalace: timed out after 300s — skipping mine")
+        print("mempalace_mined: false (timeout after 300s)")
+        return
 
     if result.returncode != 0:
         # D-07: fail-soft. D-11: log only on failure, only last ~20 lines,
