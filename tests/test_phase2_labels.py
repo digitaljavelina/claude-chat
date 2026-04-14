@@ -747,21 +747,28 @@ class TestFixtures(unittest.TestCase):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+_SKILL_PATH = __import__("pathlib").Path.home() / ".claude/skills/sync-chats/SKILL.md"
+
+
+@unittest.skipUnless(
+    _SKILL_PATH.exists(),
+    f"sync-chats skill not installed at {_SKILL_PATH} — skipping SKILL.md content checks",
+)
 class TestFewShotExamples(unittest.TestCase):
     """Tests that the few-shot JSON examples embedded in SKILL.md are structurally valid.
 
     Why this matters: SKILL.md contains 4 few-shot examples that Claude sees before
     labeling a real session. If an example has a bad title (>10 words), invalid tags
     (not kebab-case), or an out-of-range coherence score, it trains Claude to produce
-    similarly broken output. These tests catch that at CI time.
+    similarly broken output. These tests catch that at CI time — when the skill is installed.
 
-    Python beginner note: pathlib.Path.home() returns the user's home directory as
-    a Path object (e.g., /Users/michaelhenry). The / operator on Path objects joins
-    path segments, so Path.home() / '.claude/skills/sync-chats/SKILL.md' produces
-    the full path to the skill file.
+    SKILL.md is a per-user artifact deployed to ~/.claude/skills/sync-chats/ (decision
+    D-09), not a repo-tracked file. When the skill is NOT installed (fresh clone, CI
+    runner), the class-level skipUnless decorator skips all tests here with a clear
+    message. Running them on an installed system still catches broken few-shot examples.
     """
 
-    SKILL_PATH = __import__("pathlib").Path.home() / ".claude/skills/sync-chats/SKILL.md"
+    SKILL_PATH = _SKILL_PATH
 
     def _load_skill_content(self) -> str:
         """Read SKILL.md and return its text content."""
