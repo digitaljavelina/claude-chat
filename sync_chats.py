@@ -1297,15 +1297,21 @@ def cmd_mine(args) -> None:
         ["mempalace", "mine", vault_chats, "--mode", "convos", "--extract", "general"],
         capture_output=True,
         text=True,
-        timeout=300,  # D-09; TimeoutExpired handling comes in Plan 02
+        timeout=300,  # D-09; T-4-04 mitigation (DoS via hung process)
     )
 
-    # Plan 02 will replace this with full returncode + TimeoutExpired branches,
-    # _log_sync for failures, and stderr truncation (D-11).
-    if result.returncode == 0:
-        print("mempalace_mined: true")
-    else:
+    if result.returncode != 0:
+        # D-07: fail-soft. D-11: log only on failure, only last ~20 lines,
+        # to avoid polluting sync.log on healthy runs and to bound info-disclosure
+        # blast radius if mempalace ever echoed content in its errors (T-4-03).
+        # Python idiom: splitlines()[-20:] slices the last 20 lines of a list.
+        # If stderr has <20 lines, slicing returns what's there — no IndexError.
+        stderr_tail = "\n".join(result.stderr.splitlines()[-20:])
+        _log_sync(f"mempalace mine failed (exit {result.returncode}):\n{stderr_tail}")
         print(f"mempalace_mined: false (exit {result.returncode})")
+        return
+
+    print("mempalace_mined: true")
 
 
 # ─── Entry Point ──────────────────────────────────────────────────────────────

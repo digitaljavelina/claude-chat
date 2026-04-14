@@ -136,8 +136,34 @@ class TestCmdMineGracefulDeg(unittest.TestCase):
         self.assertIn("not found", log_msg)
 
     def test_nonzero_exit_false(self):
-        """MEM-02: cmd_mine prints false when mempalace exits non-zero."""
-        self.skipTest("pending 4-02-02")
+        """MEM-02 / D-07 / D-11: non-zero exit → false outcome, last 20 stderr lines logged."""
+        fake_args = argparse.Namespace()
+        # 30 lines so we can prove slicing takes the last 20, not the first 10.
+        stderr_lines = [f"err line {i}" for i in range(30)]
+        fake_stderr = "\n".join(stderr_lines)
+
+        with patch("sync_chats.shutil.which", return_value="/fake/mempalace"), patch(
+            "sync_chats._require_config",
+            return_value={
+                "vault_path": "/tmp/fake-vault",
+                "machine_label": "t",
+                "schema_version": 1,
+            },
+        ), patch("sync_chats.subprocess.run") as mock_run, patch("sync_chats._log_sync") as mock_log, patch(
+            "builtins.print"
+        ) as mock_print:
+            mock_run.return_value = MagicMock(returncode=2, stdout="", stderr=fake_stderr)
+            sync_chats.cmd_mine(fake_args)
+
+        mock_print.assert_called_once_with("mempalace_mined: false (exit 2)")
+        mock_log.assert_called_once()
+        logged = mock_log.call_args[0][0]
+        # Last 20 lines present
+        self.assertIn("err line 29", logged)
+        self.assertIn("err line 10", logged)
+        # First 10 lines NOT present (proves slicing is [-20:], not [:20])
+        self.assertNotIn("err line 0\n", logged)
+        self.assertNotIn("err line 9\n", logged)
 
     def test_timeout_false(self):
         """MEM-02: cmd_mine prints false on TimeoutExpired."""
