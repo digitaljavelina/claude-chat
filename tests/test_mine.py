@@ -81,7 +81,24 @@ class TestCmdMine(unittest.TestCase):
 
     def test_vault_path_from_config(self):
         """MEM-01: vault path resolved dynamically from _require_config, not hardcoded."""
-        self.skipTest("pending 4-01-03")
+        fake_args = argparse.Namespace()
+
+        for vault in ["/vault-one", "/vault-two"]:
+            with patch("sync_chats.shutil.which", return_value="/fake/mempalace"), patch(
+                "sync_chats._require_config",
+                return_value={
+                    "vault_path": vault,
+                    "machine_label": "t",
+                    "schema_version": 1,
+                },
+            ), patch("sync_chats.subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+                sync_chats.cmd_mine(fake_args)
+                argv, _ = mock_run.call_args
+                # argv[0] is the subprocess argv list; index 2 is the vault_chats target.
+                # Order: ["mempalace", "mine", vault_chats, "--mode", "convos", "--extract", "general"]
+                # The vault_chats target must reflect the current config, not a stale value.
+                self.assertEqual(argv[0][2], f"{vault}/Chats")
 
 
 class TestCmdMineGracefulDeg(unittest.TestCase):
