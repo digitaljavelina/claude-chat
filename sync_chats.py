@@ -1262,6 +1262,50 @@ def cmd_status(args) -> None:
     print(f"Pending:    {len(pending)} sessions")
 
 
+def cmd_mine(args) -> None:
+    """Shell out to `mempalace mine` after a sync run (MEM-01/02/03).
+
+    Reports one of three outcomes via stdout:
+      mempalace_mined: true
+      mempalace_mined: false (<reason>)
+      mempalace_mined: skipped (<reason>)
+
+    Happy path only in Plan 01; error/timeout paths added in Plan 02.
+
+    Python beginner note: Path / "Chats" uses pathlib's overloaded '/' operator
+    to join path segments, same as os.path.join but more readable. str() converts
+    the Path object to a plain string that subprocess.run expects in its argv list.
+    """
+    config = _require_config()
+    # config["vault_path"] is the Obsidian vault ROOT; Chats/ is the subfolder
+    vault_chats = str(Path(config["vault_path"]) / "Chats")
+
+    # D-08: binary-not-found handling. shutil.which() searches PATH for the
+    # binary, returning its full path or None if not found. Plan 02 will add
+    # _log_sync logging; for now just print the skipped outcome.
+    if shutil.which("mempalace") is None:
+        print("mempalace_mined: skipped (command not found)")
+        return
+
+    # MEM-01 (per D-01, D-04): list-form argv, no shell=True. T-4-01 mitigation.
+    # Using a list instead of a shell string means vault_chats metacharacters
+    # (spaces, semicolons, etc.) are passed literally to the process, not
+    # interpreted by the shell — this prevents command injection.
+    result = subprocess.run(
+        ["mempalace", "mine", vault_chats, "--mode", "convos", "--extract", "general"],
+        capture_output=True,
+        text=True,
+        timeout=300,  # D-09; TimeoutExpired handling comes in Plan 02
+    )
+
+    # Plan 02 will replace this with full returncode + TimeoutExpired branches,
+    # _log_sync for failures, and stderr truncation (D-11).
+    if result.returncode == 0:
+        print("mempalace_mined: true")
+    else:
+        print(f"mempalace_mined: false (exit {result.returncode})")
+
+
 # ─── Entry Point ──────────────────────────────────────────────────────────────
 
 
@@ -1296,6 +1340,13 @@ def main() -> None:
     # status subcommand
     p_status = subparsers.add_parser("status", help="Show sync status summary")
     p_status.set_defaults(func=cmd_status)
+
+    # MEM-01: mine subcommand (D-01) — shell out to mempalace after writes
+    p_mine = subparsers.add_parser(
+        "mine",
+        help="Mine vault Chats/ into MemPalace (post-run step)",
+    )
+    p_mine.set_defaults(func=cmd_mine)
 
     args = parser.parse_args()
 

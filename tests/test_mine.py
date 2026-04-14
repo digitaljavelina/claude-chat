@@ -45,7 +45,39 @@ class TestCmdMine(unittest.TestCase):
 
     def test_runs_correct_command(self):
         """MEM-01: cmd_mine invokes subprocess.run with correct list-form argv."""
-        self.skipTest("pending 4-01-02")
+        fake_args = argparse.Namespace()
+
+        with patch("sync_chats.shutil.which", return_value="/fake/mempalace"), patch(
+            "sync_chats._require_config",
+            return_value={
+                "vault_path": "/tmp/fake-vault",
+                "machine_label": "test",
+                "schema_version": 1,
+            },
+        ), patch("sync_chats.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+            sync_chats.cmd_mine(fake_args)
+
+        # Exactly one subprocess invocation
+        self.assertEqual(mock_run.call_count, 1)
+        argv, kwargs = mock_run.call_args
+        # T-4-01: list-form argv (positional), not shell=True
+        self.assertEqual(
+            argv[0],
+            [
+                "mempalace",
+                "mine",
+                "/tmp/fake-vault/Chats",
+                "--mode",
+                "convos",
+                "--extract",
+                "general",
+            ],
+        )
+        self.assertNotIn("shell", kwargs)  # or: self.assertFalse(kwargs.get("shell"))
+        self.assertTrue(kwargs.get("capture_output"))
+        self.assertTrue(kwargs.get("text"))
+        self.assertEqual(kwargs.get("timeout"), 300)
 
     def test_vault_path_from_config(self):
         """MEM-01: vault path resolved dynamically from _require_config, not hardcoded."""
