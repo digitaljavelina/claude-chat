@@ -815,19 +815,25 @@ def _log_scrub_stats(session_id: str, stats: dict) -> None:
     _log_sync(f"scrub session={short_id} patterns={patterns_str} total_chars={total_chars}")
 
 
-def _read_auto_label_hash(vault_file: Path) -> "str | None":
-    """Read the auto_label_hash value from an existing vault file's frontmatter.
+def _read_frontmatter_field(vault_file: Path, key: str) -> "str | None":
+    """Read a single scalar frontmatter field's value from a vault file.
 
-    Used for crash reconciliation (D-25): if the process crashed after writing the file
-    but before updating state.json, we re-derive the expected hash and compare to the
-    stored hash to confirm the file is the one we would have written.
+    Scans only the first 30 lines (frontmatter is always near top — D-20 efficiency cap).
+    Returns the string value after `key: ` or None if the key isn't present or the file
+    can't be read. Used by crash reconciliation to inspect both `auto_label_hash` and
+    `session_id` without reading the whole file.
+
+    Why hand-rolled instead of pyyaml? Zero-deps invariant (PROJECT.md). Frontmatter is
+    simple enough (one scalar per line, no nested structures used) that a 15-line scan
+    is cheaper than a dependency.
     """
     try:
         with open(vault_file, "r", encoding="utf-8", errors="replace") as f:
             in_frontmatter = False
             delimiter_count = 0
+            prefix = f"{key}:"
             for i, line in enumerate(f):
-                if i >= 30:  # only scan first 30 lines (frontmatter is always near top)
+                if i >= 30:  # frontmatter always near top — bounded scan (D-20)
                     break
                 stripped = line.strip()
                 if stripped == "---":
@@ -836,8 +842,7 @@ def _read_auto_label_hash(vault_file: Path) -> "str | None":
                     if delimiter_count == 2:
                         break  # past frontmatter — stop looking
                     continue
-                if in_frontmatter and stripped.startswith("auto_label_hash:"):
-                    # Extract value after "auto_label_hash: "
+                if in_frontmatter and stripped.startswith(prefix):
                     parts = stripped.split(":", 1)
                     if len(parts) == 2:
                         return parts[1].strip()
@@ -846,16 +851,46 @@ def _read_auto_label_hash(vault_file: Path) -> "str | None":
     return None
 
 
+def _read_auto_label_hash(vault_file: Path) -> "str | None":
+    """Read the auto_label_hash value from an existing vault file's frontmatter.
+
+    Thin wrapper over _read_frontmatter_field — preserves Phase 1's API so any
+    existing callers/tests continue to work unchanged (D-20: factor without breaking).
+
+    Used for crash reconciliation (D-25): if the process crashed after writing the file
+    but before updating state.json, we re-derive the expected hash and compare to the
+    stored hash to confirm the file is the one we would have written.
+    """
+    return _read_frontmatter_field(vault_file, "auto_label_hash")
+
+
 def _reconcile_crash(vault_file: Path, body_bytes: bytes, session_id: str, state: dict, fingerprint: dict) -> str:
     """Handle the case where vault file exists but state.json doesn't know about it.
 
-    Per D-25: if the process crashed between writing the vault file and updating state,
-    we compare the auto_label_hash to verify it's the same content we would have written.
-    Returns "reconciled" if hashes match (safe to update state), "collision" if they differ.
+    Three-way return (D-18):
+      "reconciled" — same session, hash matches → update state + skip (crash recovery)
+      "edited"     — same session, hash differs → REFUSE + log + record session (D-19:
+                     user manually edited; respect their edits; never touch again)
+      "collision"  — different session occupying the same slug → fall through to -2/-3
+                     naming loop in cmd_write (D-15 preserved)
+
+    Per D-17: the previous implementation conflated "edited" with "collision" and
+    fell into the slug-collision fallback, creating orphan `<slug>-2.md` files with
+    fresh auto-labels. That was the Phase 1 bug closing SC#5 closes.
     """
     # Re-derive the hash we would compute for this session's body bytes
     expected_hash = hashlib.sha256(body_bytes).hexdigest()
-    existing_hash = _read_auto_label_hash(vault_file)
+    existing_session_id = _read_frontmatter_field(vault_file, "session_id")
+    existing_hash = _read_frontmatter_field(vault_file, "auto_label_hash")
+
+    # Case 1: different session → true slug collision (D-15 semantics unchanged)
+    if existing_session_id and existing_session_id != session_id:
+        return "collision"
+
+    # From here on: existing_session_id is None OR equals session_id.
+    # If it's None (malformed / legacy file), fall back to hash-based reconciliation
+    # matching Phase 1's original behavior, to avoid being more restrictive than
+    # necessary on files that predate Phase 3's session_id frontmatter field.
 
     if existing_hash and expected_hash == existing_hash:
         # Crash recovery: the file is exactly what we would have written — update state
@@ -865,7 +900,14 @@ def _reconcile_crash(vault_file: Path, body_bytes: bytes, session_id: str, state
         save_state(state)
         return "reconciled"
 
-    # Hashes differ: either a genuine slug collision or user-edited the file
+    # Same session, different hash → user edited. REFUSE per D-19.
+    # (cmd_write will do the logging + state recording; we just classify here.)
+    if existing_session_id == session_id:
+        return "edited"
+
+    # Fallback: existing_session_id is None AND hash mismatch. Treat as collision
+    # to stay conservative — create a new file with a -2 suffix. This matches
+    # Phase 1's original behavior for malformed/unknown-origin vault files.
     return "collision"
 
 
@@ -1124,6 +1166,24 @@ def cmd_write(args) -> None:
                 _log_sync(f"Synced 0 new, 1 skipped (already synced), 0 failed.")
                 print("skipped: already_synced (recovered from interrupted write)")
                 return
+            elif result == "edited":
+                # D-19: user manually edited the vault file. REFUSE to touch it.
+                # Record the session in state so no future run re-emits it from scan
+                # (this is clobber defense layer 3 doing its job — a permanent
+                # decision: once edited, the skill never writes over the user's work).
+                if args.session_id not in state["synced_session_ids"]:
+                    state["synced_session_ids"].append(args.session_id)
+                state["fingerprints"][args.session_id] = fingerprint
+                state["last_run_at"] = datetime.now(timezone.utc).isoformat()
+                save_state(state)
+
+                # D-19 exact log message — greppable by canary tests and user audits
+                _log_sync(
+                    f"skipped: user_edited (auto_label_hash mismatch, session_id matches) "
+                    f"session={args.session_id[:8]} file={target.name}"
+                )
+                print(f"skipped: user_edited ({target.name})")
+                return  # exit 0 — per D-19
             else:
                 # True slug collision: a different session produced the same filename.
                 # Per D-15: try appending -2, -3, ... -99 until a free name is found.
