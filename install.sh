@@ -183,13 +183,13 @@ check_jq() {
 }
 
 check_pipx() {
-  step "pipx (optional — only needed if you want MemPalace)"
+  step "pipx (recommended — needed for MemPalace)"
   if command -v pipx >/dev/null 2>&1; then
     ok "pipx found at $(command -v pipx)"
     return 0
   fi
   warn "pipx not found."
-  if ask_yn "Install pipx via 'brew install pipx'?"; then
+  if ask_yn "Install pipx via 'brew install pipx'?" default_yes; then
     if ! command -v brew >/dev/null 2>&1; then
       err "Homebrew not installed. Skipping pipx."
       STEPS_SKIPPED=$((STEPS_SKIPPED+1))
@@ -204,7 +204,7 @@ check_pipx() {
 }
 
 check_mempalace() {
-  step "mempalace (optional — semantic memory palace for your chats)"
+  step "mempalace (recommended — semantic memory palace for your chats)"
   if command -v mempalace >/dev/null 2>&1; then
     ok "mempalace found at $(command -v mempalace)"
     return 0
@@ -215,7 +215,7 @@ check_mempalace() {
     return 0
   fi
   warn "mempalace not found."
-  if ask_yn "Install via 'pipx install mempalace'?"; then
+  if ask_yn "Install via 'pipx install mempalace'?" default_yes; then
     run_cmd "pipx install mempalace"
     STEPS_INSTALLED=$((STEPS_INSTALLED+1))
   else
