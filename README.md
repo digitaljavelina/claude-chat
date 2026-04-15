@@ -22,7 +22,8 @@ The design: single-file, stdlib-only Python — no external packages, no virtual
 - **An Obsidian vault** at a known absolute path. Any folder works; we write into `<vault>/Chats/`, created automatically on first write.
 - **Claude Code** installed — this is what fires the SessionEnd hook.
 - **Optional:** `pipx` + `mempalace` for MemPalace integration (see Section 7).
-- **NOT iCloud-synced:** `~/.claude-chat/` must be local disk. The script asserts this at startup; if `CLAUDE_CHAT_HOME` resolves into `~/Library/Mobile Documents/` or contains `iCloud`, it refuses to run. See Section 9 if you need to relocate.
+- **`~/.claude-chat/` must be on local disk, NOT cloud-synced.** State files on cloud-sync services (iCloud Drive, Dropbox, Google Drive, OneDrive, Syncthing, etc.) race each other across machines and corrupt. The script explicitly detects macOS iCloud (`~/Library/Mobile Documents/`, paths containing `iCloud`) and refuses to run — but other services won't trigger the assertion, so if you use Dropbox or similar, keep `~/.claude-chat/` out of those folders manually. See Section 9 if you need to relocate.
+- **Your Obsidian vault location doesn't matter** — it can be local, iCloud, Dropbox, or anywhere else. Only `~/.claude-chat/` (the state directory) needs to stay local.
 
 ---
 
@@ -43,13 +44,19 @@ Replace `<your-repo-clone-path>` with wherever you keep git repos — e.g., `~/P
 ## 4. Configure
 
 ```bash
+# Replace <vault-path> with the absolute path to your Obsidian vault.
+# Examples:
+#   ~/Obsidian/MyVault                                                   (local)
+#   ~/Documents/Obsidian/MyVault                                         (local)
+#   ~/Library/Mobile Documents/iCloud~md~obsidian/Documents/MyVault      (iCloud-synced)
+#   ~/Dropbox/Obsidian/MyVault                                           (Dropbox-synced)
 python3 ~/.claude-chat/sync_chats.py init \
   --label mbp \
-  --vault "/Users/you/Library/Mobile Documents/iCloud~md~obsidian/Documents/YourVault"
+  --vault "<vault-path>"
 ```
 
 - `--label` is this machine's short identity (e.g., `mbp`, `studio`, `thinkpad`). It prefixes every vault filename: `<label>--YYYY-MM-DD--<slug>.md`. Keep it short and alphanumeric.
-- `--vault` is an absolute path to your Obsidian vault directory. The pipeline writes into `<vault>/Chats/` (created on first write if missing).
+- `--vault` is an absolute path to your Obsidian vault directory. The pipeline writes into `<vault>/Chats/` (created on first write if missing). Any location works — local, iCloud, Dropbox, etc. — because only the vault writes happen here; state files stay in `~/.claude-chat/`.
 - Re-running `init` with the same flags is a safe no-op. Use this on the second Mac to verify config without fear of clobbering.
 
 Verify:
@@ -124,9 +131,9 @@ If this prints the parsed JSON without errors, you're good. If it prints a parse
 ## 6. First run
 
 1. End any Claude Code session (close the tab, hit `/exit`, or just close the terminal).
-2. Within ~1 second, check your vault:
+2. Within ~1 second, check your vault. This one-liner reads your configured vault path so it works regardless of where you keep the vault:
    ```bash
-   ls -lt "/Users/you/Library/Mobile Documents/iCloud~md~obsidian/Documents/YourVault/Chats/" | head -3
+   ls -lt "$(python3 -c "import json,pathlib;print(json.loads((pathlib.Path.home()/'.claude-chat'/'config.json').read_text())['vault_path'])")/Chats/" | head -3
    ```
    You should see a new `<label>--<date>--<slug>.md` file with a `[stub]`-style filename ending like `--session-about-x`.
 3. Check the machine-readable run record:
@@ -192,7 +199,7 @@ The SKILL will call `mempalace mine <vault>/Chats --mode convos --extract genera
 
 ## 9. Troubleshooting
 
-**"iCloud assertion failed" at startup.** `~/.claude-chat/` is inside an iCloud-synced path, or a symlink that resolves into one. The pipeline refuses to run because state-file corruption on iCloud is a known class of bug. Fix:
+**"iCloud assertion failed" at startup.** `~/.claude-chat/` is inside an iCloud-synced path (macOS `~/Library/Mobile Documents/...`), or a symlink that resolves into one. The pipeline refuses to run because state-file corruption on iCloud is a known class of bug. Fix:
 
 ```bash
 # Option A: relocate via env var (preferred — survives reboots if in shell rc)
@@ -204,6 +211,8 @@ mv ~/.claude-chat /Users/you/claude-chat-local
 ```
 
 The assertion resolves symlinks (`Path.resolve()`), so symlinking `~/.claude-chat` to an iCloud path will still fail — the env-var route is cleanest.
+
+**State corruption after a `~/.claude-chat/` sync across machines (Dropbox / Google Drive / OneDrive / Syncthing).** The built-in assertion only detects macOS iCloud — other cloud-sync services won't trigger the error but will still cause the same corruption class (two machines racing on `state.json` writes). If you notice sessions disappearing from state, duplicate vault files, or `last_run.json` flipping contents between machines, check whether `~/.claude-chat/` is inside a synced folder. Fix: same two options as the iCloud case above — relocate via `CLAUDE_CHAT_HOME` env var or physically move the folder out of the synced tree.
 
 **Hook doesn't fire on session end.**
 
