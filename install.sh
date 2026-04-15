@@ -75,8 +75,16 @@ ask_yn() {
     return 0
   fi
   if [[ $DRY_RUN -eq 1 ]]; then
-    echo "  ${C_DIM}dry-run: would ask: ${prompt} → assuming NO${C_RESET}"
-    return 1
+    # Honor the passed default so dry-run previews the "just hit Enter" flow.
+    # default_yes → dry-run assumes YES (what a user would get from Enter-key).
+    # default_no  → dry-run assumes NO.
+    if [[ "$default" == "default_yes" ]]; then
+      echo "  ${C_DIM}dry-run: would ask: ${prompt} → assuming YES (default)${C_RESET}"
+      return 0
+    else
+      echo "  ${C_DIM}dry-run: would ask: ${prompt} → assuming NO (default)${C_RESET}"
+      return 1
+    fi
   fi
   local hint="[y/N]"
   [[ "$default" == "default_yes" ]] && hint="[Y/n]"
@@ -232,6 +240,12 @@ check_claude_chat_home() {
   fi
 
   # Cloud-sync sanity check (matches _assert_not_icloud in sync_chats.py).
+  # Skip if the dir doesn't exist yet (dry-run case where mkdir was previewed
+  # but not executed) — we can't realpath something that isn't there.
+  if [[ ! -d "$CLAUDE_CHAT_HOME" ]]; then
+    dim "  Skipping cloud-sync scan — directory not yet on disk (dry-run)."
+    return 0
+  fi
   local real
   real="$(cd "$CLAUDE_CHAT_HOME" && pwd -P)"
   if [[ "$real" == *"Mobile Documents"* || "$real" == *"/iCloud"* ]]; then
@@ -466,9 +480,15 @@ main() {
   # ─── Report ────────────────────────────────────────────────────────────────
   echo ""
   echo "${C_BOLD}── Summary ──${C_RESET}"
+  local installed_label="installed this run"
+  local skipped_label="skipped"
+  if [[ $DRY_RUN -eq 1 ]]; then
+    installed_label="would install"
+    skipped_label="would skip"
+  fi
   echo "  ${C_OK}${STEPS_OK} already in place${C_RESET}"
-  echo "  ${C_OK}${STEPS_INSTALLED} installed this run${C_RESET}"
-  echo "  ${C_WARN}${STEPS_SKIPPED} skipped${C_RESET}"
+  echo "  ${C_OK}${STEPS_INSTALLED} ${installed_label}${C_RESET}"
+  echo "  ${C_WARN}${STEPS_SKIPPED} ${skipped_label}${C_RESET}"
   echo "  ${C_ERR}${STEPS_BLOCKED} blocked${C_RESET}"
   echo ""
 
