@@ -1577,6 +1577,170 @@ def cmd_once(args) -> None:
     sys.exit(exit_code)
 
 
+# ─── Relabel subcommand (Phase 5 Plan 04 — HOOK-04 / D-04 / D-05) ─────────────
+
+
+def _split_frontmatter_and_body(path: Path) -> "tuple[dict, bytes]":
+    """Split a vault file into (frontmatter fields dict, body bytes).
+
+    Minimal YAML parser — only the scalar/list forms emit_frontmatter writes.
+    Returns ({}, b"") if the file has no frontmatter delimiters (defensive).
+
+    Python beginner note: `bytes` vs `str` matters here because the hash that
+    gates D-05 re-label is computed over body BYTES (stable across encodings).
+    We read the file as text for the YAML parse then re-encode the body for
+    the hash; the body never round-trips through any transform that could
+    alter its bytes (no normalization, no rstrip, no newline coercion).
+    """
+    text = path.read_text(encoding="utf-8")
+    # Expected layout: "---\n<fm>\n---\n<body>"
+    if not text.startswith("---\n"):
+        return {}, b""
+
+    # Split off the leading "---\n", then the block up to the next "---\n".
+    after_first = text[4:]
+    end = after_first.find("\n---\n")
+    if end == -1:
+        return {}, b""
+
+    fm_block = after_first[:end]
+    body = after_first[end + len("\n---\n") :]
+
+    fields: dict = {}
+    current_list_key: "str | None" = None
+    for line in fm_block.split("\n"):
+        if not line:
+            current_list_key = None
+            continue
+        if line.startswith("  - ") and current_list_key is not None:
+            # First list item: replace the seeded None with an empty list.
+            if not isinstance(fields.get(current_list_key), list):
+                fields[current_list_key] = []
+            fields[current_list_key].append(line[4:].strip())
+            continue
+        # Scalar or list-header line.
+        current_list_key = None
+        if ":" not in line:
+            continue
+        key, _, rest = line.partition(":")
+        key = key.strip()
+        rest = rest.strip()
+        if rest == "":
+            # Either a null value (bare `key:`) or the start of a block list.
+            # We can't tell from this line alone — look ahead by seeding an
+            # empty list; if no `  - ` lines follow, we treat it as None below.
+            fields[key] = None
+            current_list_key = key
+            continue
+        # Typed scalar parse — strings stay strings unless they look like
+        # bool/int. This mirrors how emit_frontmatter writes them.
+        if rest in ("true", "false"):
+            fields[key] = rest == "true"
+        else:
+            try:
+                fields[key] = int(rest)
+            except ValueError:
+                # Strip surrounding quotes if json.dumps wrapped the value.
+                if rest.startswith('"') and rest.endswith('"'):
+                    try:
+                        fields[key] = json.loads(rest)
+                    except json.JSONDecodeError:
+                        fields[key] = rest.strip('"')
+                else:
+                    fields[key] = rest
+
+    # Clean up bare `key:` entries whose list stayed empty — treat as None.
+    for k, v in list(fields.items()):
+        if v == []:
+            fields[k] = None
+
+    return fields, body.encode("utf-8")
+
+
+def cmd_relabel(args) -> None:
+    """Upgrade a stub-labeled vault file to AI-quality labels (HOOK-04 / D-04).
+
+    D-05 guard: only files whose `auto_label_hash` is the literal sentinel
+    "stub" may be rewritten. A real SHA-256 (previously AI-labeled) or any
+    hand-edited value is REFUSED with exit 1 — never re-label a non-stub file.
+
+    stdin contract matches `write` (D-01/D-02): label JSON with a `title` key.
+    Body bytes are preserved verbatim; `auto_label_hash` is recomputed as the
+    real SHA-256 of the body (upgrade stub → real hash); `needs_review` → false.
+    """
+    config = _require_config()
+
+    # D-01/D-02: label JSON on stdin. Mirror cmd_write's validation.
+    label_input = sys.stdin.read()
+    try:
+        label = json.loads(label_input)
+    except json.JSONDecodeError as e:
+        print(f"relabel: invalid label JSON on stdin: {e}", file=sys.stderr)
+        sys.exit(1)
+    if "title" not in label:
+        print("relabel: label JSON must contain a 'title' field.", file=sys.stderr)
+        sys.exit(1)
+
+    # Locate the vault file for this session_id by scanning Chats/ frontmatter.
+    chats_dir = Path(config["vault_path"]) / "Chats"
+    if not chats_dir.exists():
+        print(f"relabel: vault Chats/ not found at {chats_dir}", file=sys.stderr)
+        sys.exit(1)
+
+    candidates = [p for p in chats_dir.glob("*.md") if _read_frontmatter_field(p, "session_id") == args.session_id]
+    if not candidates:
+        print(f"relabel: no vault file for session {args.session_id}", file=sys.stderr)
+        sys.exit(1)
+    if len(candidates) > 1:
+        # Collision edge case (T-05-04-03): warn and pick the first.
+        print(
+            f"relabel: warning — {len(candidates)} files match session {args.session_id}; using {candidates[0].name}",
+            file=sys.stderr,
+        )
+    vault_file = candidates[0]
+
+    # D-05 sentinel guard.
+    existing_hash = _read_auto_label_hash(vault_file)
+    if existing_hash != "stub":
+        print(
+            f"relabel: refusing to rewrite {vault_file.name} "
+            f"(auto_label_hash is not 'stub' — D-05 sentinel-only trigger)",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    fields, body_bytes = _split_frontmatter_and_body(vault_file)
+    if not fields:
+        print(f"relabel: {vault_file.name} has no frontmatter to rewrite", file=sys.stderr)
+        sys.exit(1)
+
+    # Upgrade: stub → real SHA-256 of the (unchanged) body bytes.
+    new_hash = hashlib.sha256(body_bytes).hexdigest()
+
+    # Overwrite label-owned fields; preserve everything else (project, session_id,
+    # model, token_count, msg_count, machine, hostname, synced_at, privacy_review).
+    fields["title"] = label["title"]
+    fields["gist"] = label.get("gist")
+    fields["tags"] = label.get("tags", [])
+    fields["coherence_score"] = label.get("coherence_score")
+    fields["needs_review"] = False  # D-05: stub → real means review is done
+    fields["auto_label_hash"] = new_hash
+
+    new_fm = emit_frontmatter(fields)
+    # Atomic write with .bak preservation (same discipline as _write_atomic).
+    tmp_path = vault_file.with_suffix(".tmp")
+    bak_path = vault_file.with_suffix(vault_file.suffix + ".bak")
+    with open(tmp_path, "wb") as f:
+        f.write(new_fm.encode("utf-8"))
+        f.write(body_bytes)
+        f.flush()
+        os.fsync(f.fileno())
+    shutil.copy2(vault_file, bak_path)
+    os.replace(tmp_path, vault_file)
+
+    print(f"relabeled: {vault_file.name}")
+
+
 # ─── Entry Point ──────────────────────────────────────────────────────────────
 
 
@@ -1630,6 +1794,15 @@ def main() -> None:
         help="Mine vault Chats/ into MemPalace (post-run step)",
     )
     p_mine.set_defaults(func=cmd_mine)
+
+    # HOOK-04: relabel subcommand (Phase 5 D-04/D-05) — upgrade stub-labeled
+    # vault files to AI-quality labels. Sentinel-only trigger (auto_label_hash == "stub").
+    p_relabel = subparsers.add_parser(
+        "relabel",
+        help="Upgrade a stub-labeled vault file with fresh label JSON from stdin",
+    )
+    p_relabel.add_argument("session_id", help="UUID of the session whose vault file to relabel")
+    p_relabel.set_defaults(func=cmd_relabel)
 
     args = parser.parse_args()
 
