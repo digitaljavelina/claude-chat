@@ -295,6 +295,38 @@ check_symlink() {
   fi
 }
 
+check_claude_chat_export() {
+  # sync_chats.py shells out to `claude-chat.py export --stdout` to render each
+  # session's markdown body. If the flag is missing (e.g. user has an old fork
+  # without Phase-1 additions), writes will fail silently. Verify up front.
+  step "claude-chat.py export --stdout compatibility"
+  local engine="$REPO_ROOT/claude-chat.py"
+  if [[ ! -f "$engine" ]]; then
+    err "claude-chat.py not found at $engine"
+    echo "  The repo clone appears incomplete — re-clone from github.com/digitaljavelina/claude-chat."
+    STEPS_BLOCKED=$((STEPS_BLOCKED+1))
+    return 1
+  fi
+  # Run --help and confirm it parses without error.
+  if ! python3 "$engine" --help >/dev/null 2>&1; then
+    err "python3 $engine --help failed to run."
+    echo "  Check the file isn't corrupted; if recent, try 'git pull'."
+    STEPS_BLOCKED=$((STEPS_BLOCKED+1))
+    return 1
+  fi
+  # Confirm the `export` subcommand offers --stdout.
+  # Use `export -h` (not --help at top level) so we see the subcommand's own flags.
+  if python3 "$engine" export -h 2>&1 | grep -q -- "--stdout"; then
+    ok "claude-chat.py export --stdout flag available"
+  else
+    err "claude-chat.py's 'export' subcommand does not expose --stdout."
+    echo "  sync_chats.py depends on this flag for body rendering; writes will fail."
+    echo "  If you have a fork of claude-chat.py, pull upstream or re-clone."
+    STEPS_BLOCKED=$((STEPS_BLOCKED+1))
+    return 1
+  fi
+}
+
 check_config() {
   step "~/.claude-chat/config.json"
   local cfg="$CLAUDE_CHAT_HOME/config.json"
@@ -426,6 +458,7 @@ main() {
   check_mempalace     || true
   check_claude_chat_home || true
   check_symlink       || true
+  check_claude_chat_export || true
   check_config        || true
   check_session_end_hook || true
   sanity_smoke_test   || true
