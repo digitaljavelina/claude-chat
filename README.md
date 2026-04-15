@@ -29,6 +29,10 @@ The design: single-file, stdlib-only Python — no external packages, no virtual
 
 ## 3. Install
 
+**Fastest path — guided installer:** after cloning, run `./install.sh` from the repo root. It interactively walks every prerequisite + setup step (Python, Obsidian, Claude Code, pipx, mempalace, symlink, `init`, SessionEnd hook) and skips anything already in place. Use `./install.sh --dry-run` for a read-only status report, or `-y` to auto-approve every prompt.
+
+**Manual path** (what `install.sh` does under the hood):
+
 ```bash
 git clone https://github.com/digitaljavelina/claude-chat.git <your-repo-clone-path>
 mkdir -p ~/.claude-chat
