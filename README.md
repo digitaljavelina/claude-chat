@@ -29,12 +29,14 @@ The design: single-file, stdlib-only Python — no external packages, no virtual
 ## 3. Install
 
 ```bash
-git clone https://github.com/digitaljavelina/claude-chat.git ~/Projects/claude-chat
+git clone https://github.com/digitaljavelina/claude-chat.git <your-repo-clone-path>
 mkdir -p ~/.claude-chat
-ln -sf ~/Projects/claude-chat/sync_chats.py ~/.claude-chat/sync_chats.py
+ln -sf <your-repo-clone-path>/sync_chats.py ~/.claude-chat/sync_chats.py
 ```
 
-**Why the symlink:** `~/.claude-chat/sync_chats.py` is the stable path referenced by the SessionEnd hook. Symlinking it into the repo clone means `git pull` updates the runtime copy automatically — no re-install step. Python's `Path(__file__).resolve().parent` follows the symlink, so `sync_chats.py` still finds its sibling `claude-chat.py` inside the cloned repo.
+Replace `<your-repo-clone-path>` with wherever you keep git repos — e.g., `~/Projects/claude-chat`, `~/code/claude-chat`, or `~/Documents/Projects/Python/claude-chat`. The clone path is yours to choose; the symlink decouples it from the stable path that the SessionEnd hook references.
+
+**Why the symlink:** `~/.claude-chat/sync_chats.py` is the stable path referenced by the SessionEnd hook. Symlinking it into your repo clone means `git pull` updates the runtime copy automatically — no re-install step. Python's `Path(__file__).resolve().parent` follows the symlink, so `sync_chats.py` still finds its sibling `claude-chat.py` inside the cloned repo.
 
 ---
 
