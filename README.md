@@ -236,4 +236,4 @@ Full decision log and per-phase artifacts live in `.planning/` — see `.plannin
 
 ---
 
-_Built 2026-04. MIT license._
+MIT — by [Holger Morlok](https://github.com/holbizmetrics)
