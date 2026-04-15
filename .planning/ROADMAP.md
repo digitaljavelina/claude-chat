@@ -140,4 +140,26 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 ---
 
-_Roadmap created: 2026-04-10 from research-synthesis phase convergence (SUMMARY.md §5). 40 requirements across CORE/LABEL/PRIV/MEM/HOOK/OBSERV mapped to 5 phases. Granularity: coarse (5 phases). All 40 requirements mapped; zero orphans._
+## Backlog
+
+Unsequenced ideas accumulated post-milestone. Promote to active milestone via `/gsd-review-backlog`.
+
+### Phase 999.1: Broaden cloud-sync assertion beyond iCloud (BACKLOG)
+
+**Goal:** Extend `_assert_not_icloud` in sync_chats.py to detect Dropbox, Google Drive, OneDrive, and Syncthing paths — not just macOS iCloud — so users who put `~/.claude-chat/` in any cloud-synced folder get a startup error instead of silent state.json race-corruption across machines.
+
+**Requirements:** TBD
+
+**Plans:** 0 plans
+
+Origin: User feedback 2026-04-15 during Phase 5 README-generalization review — _"people may not store obsidian in icloud - make it more generic throughout"_. README Section 2/9 document the limitation verbally (commit `c1b821f`); the code-level detection gap remains. See reference memory `reference_assert_not_icloud_narrow_scope.md` for the full gap analysis, detection-coverage table across 6 services, and a fix-candidate sketch (adds `CLOUD_MARKERS` list + `CLAUDE_CHAT_ALLOW_CLOUD=1` escape-hatch env var).
+
+**Design invariant:** Applies to `CLAUDE_CHAT_HOME` (state dir) only, NEVER to `config['vault_path']` — the vault itself is expected to be cloud-synced per D-23. That's the whole point of the project.
+
+Plans:
+
+- [ ] TBD (promote with `/gsd-review-backlog` when ready)
+
+---
+
+_Roadmap created: 2026-04-10 from research-synthesis phase convergence (SUMMARY.md §5). 40 requirements across CORE/LABEL/PRIV/MEM/HOOK/OBSERV mapped to 5 phases. Granularity: coarse (5 phases). All 40 requirements mapped; zero orphans. Backlog section opened 2026-04-15 post-Phase-5 ship._
