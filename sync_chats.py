@@ -1427,6 +1427,41 @@ def cmd_mine(args) -> None:
 # ─── SessionEnd hook entry point (Phase 5 Plan 02) ────────────────────────────
 
 
+def _format_summary(run: dict) -> str:
+    """Build the OBSERV-01 canonical summary line (D-22: sole producer).
+
+    Pure function — no I/O, no logging, no side effects. Every caller that
+    needs the summary string MUST call this helper so the format stays
+    byte-identical across cmd_once, cmd_status, and future integrations.
+
+    D-23 format (LOCKED):
+        Synced {N} new chats, {M} skipped (already-synced),
+        {K} flagged for review, mempalace_mined: {status}[ ({reason})]
+
+    The parenthesized reason is appended iff `mempalace_mined` is "false" or
+    "skipped" AND `mempalace_reason` is non-null (Phase 4 D-15). When status
+    is "true", the reason is never appended even if one is present.
+
+    Python beginner note: `dict.get(key, default)` returns the default if the
+    key is missing. Using sparse defaults here makes the helper defensive
+    against malformed last_run.json (e.g. hand-edited or from a future schema).
+    """
+    synced = run.get("synced", 0)
+    skipped = run.get("skipped", 0)
+    flagged = run.get("flagged_for_review", 0)
+    mined = run.get("mempalace_mined", "skipped")
+    reason = run.get("mempalace_reason")
+
+    base = (
+        f"Synced {synced} new chats, {skipped} skipped (already-synced), "
+        f"{flagged} flagged for review, mempalace_mined: {mined}"
+    )
+    # D-15: reason is appended only when status is not "true".
+    if mined != "true" and reason:
+        return f"{base} ({reason})"
+    return base
+
+
 def cmd_once(args) -> None:
     """Run one full sync-all pass using stub labels — the SessionEnd hook entry.
 
@@ -1516,11 +1551,10 @@ def cmd_once(args) -> None:
 
     _write_last_run(last_run)
 
-    # Temporary inline summary — Plan 03 centralizes this into _format_summary(dict).
-    summary = (
-        f"Synced {synced} new, {skipped} skipped, {failed} failed "
-        f"({flagged_for_review} flagged for review). mempalace_mined: skipped"
-    )
+    # D-22 / Plan 03: _format_summary is the sole producer of the OBSERV-01
+    # canonical summary string. cmd_once, cmd_status, and future integrations
+    # all route through it to stay byte-identical.
+    summary = _format_summary(last_run)
 
     _log_sync(f"run-finish trigger=once {summary}")
     print(summary)
