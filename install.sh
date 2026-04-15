@@ -354,20 +354,37 @@ print('  vault_path:   ', c.get('vault_path','?'))
 " 2>/dev/null || echo '  (could not parse)')"
     return 0
   fi
-  warn "config.json missing — need to run sync_chats.py init."
+  warn "config.json missing — will run: sync_chats.py init --label <label> --vault <vault-path>"
+  echo "  This creates ~/.claude-chat/config.json with two values:"
+  echo "    • machine_label — short name for THIS Mac (e.g. mbp, studio, work)."
+  echo "      Prefixes every vault filename: <label>--YYYY-MM-DD--<slug>.md"
+  echo "    • vault_path    — absolute path to your Obsidian vault root."
+  echo "      Chats land in <vault>/Chats/ (subdir created on first write)."
   if [[ $DRY_RUN -eq 1 ]]; then
-    echo "  ${C_DIM}dry-run: would prompt for --label and --vault${C_RESET}"
+    echo "  ${C_DIM}dry-run: would prompt for both values. Re-run without --dry-run to proceed.${C_RESET}"
     STEPS_SKIPPED=$((STEPS_SKIPPED+1))
     return 0
   fi
   local label vault
-  read -r -p "  Machine label (short, e.g. mbp, studio): " label
+  echo ""
+  echo "  ${C_BOLD}Machine label${C_RESET} — short identifier for this computer."
+  echo "  ${C_DIM}Examples: mbp, studio, work, home, thinkpad. Keep under 8 chars, alphanumeric.${C_RESET}"
+  read -r -p "  Label: " label
   if [[ -z "$label" ]]; then
     err "Label cannot be empty."
     STEPS_BLOCKED=$((STEPS_BLOCKED+1))
     return 1
   fi
-  read -r -p "  Absolute path to your Obsidian vault: " vault
+  echo ""
+  echo "  ${C_BOLD}Vault path${C_RESET} — absolute path to your Obsidian vault root (must already exist)."
+  echo "  ${C_DIM}Examples:${C_RESET}"
+  echo "  ${C_DIM}    ~/Obsidian/MyVault                                                (local)${C_RESET}"
+  echo "  ${C_DIM}    ~/Documents/Obsidian/MyVault                                      (local)${C_RESET}"
+  echo "  ${C_DIM}    ~/Library/Mobile Documents/iCloud~md~obsidian/Documents/MyVault   (iCloud)${C_RESET}"
+  echo "  ${C_DIM}    ~/Dropbox/Obsidian/MyVault                                        (Dropbox)${C_RESET}"
+  read -r -p "  Vault path: " vault
+  # Expand ~ manually since read doesn't do shell expansion.
+  vault="${vault/#\~/$HOME}"
   if [[ -z "$vault" || ! -d "$vault" ]]; then
     err "Vault path must exist and be absolute. Got: '$vault'"
     STEPS_BLOCKED=$((STEPS_BLOCKED+1))
@@ -404,8 +421,14 @@ check_session_end_hook() {
   warn "sync-chats SessionEnd hook not installed."
   local existing
   existing="$(jq '.hooks.SessionEnd // [] | length' "$SETTINGS_JSON")"
-  dim "  Existing SessionEnd array has ${existing} entry/entries — will APPEND (not replace)."
-
+  echo "  What this step does:"
+  echo "    • Backs up ~/.claude/settings.json to .bak-preInstall-${TIMESTAMP}"
+  echo "    • APPENDS (not replaces) a new hook entry that runs:"
+  echo "        ${HOOK_COMMAND}"
+  echo "      after every Claude Code session ends. Timeout: 60s."
+  echo "    • Existing SessionEnd array has ${existing} entry/entries — yours stay untouched."
+  echo "  Effect: ending a Claude Code session automatically syncs the new chat to your vault"
+  echo "  within ~1 second (no manual /sync-chats needed for the stub-write)."
   if ask_yn "Install the hook now?" default_yes; then
     local backup="${SETTINGS_JSON}.bak-preInstall-${TIMESTAMP}"
     run_cmd "cp '$SETTINGS_JSON' '$backup'"
