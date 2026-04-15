@@ -178,6 +178,7 @@ The SKILL will call `mempalace mine <vault>/Chats --mode convos --extract genera
 ## 8. Daily use
 
 - **Automatic:** Ending a Claude Code session writes a stub-titled chat to the vault. No action needed. Stub files carry `auto_label_hash: stub`, `tags: [stub]`, `needs_review: true`.
+  - **What counts as "ending a session":** typing `/exit` or `/quit`, pressing `Ctrl+D` at an empty prompt, or closing the terminal window/tab. The SessionEnd hook does NOT fire on `/clear` (that keeps the session going, just resets context), `Ctrl+C` mid-response (interrupts but stays connected), model switches, or hard process kills / crashes. If a crash means a session never fires the hook, run `/sync-chats` interactively — it catches anything the hook missed.
 - **Upgrade stubs to AI labels:** Open any Claude Code session and run `/sync-chats`. The SKILL finds every file with `auto_label_hash: stub` and rewrites just their frontmatter with a real title/gist/tags — body bytes are never touched (D-04). The hash flips from `stub` to a real SHA-256, and `needs_review` becomes `false`. If MemPalace is installed, it also shells out once to mine the whole `Chats/` folder.
 - **Audit:** `python3 ~/.claude-chat/sync_chats.py status` shows the most-recent run summary (machine, trigger, counts, timestamps). `tail ~/.claude-chat/sync.log` shows timestamped history across all runs.
 - **One-off re-label:** If you need to re-label a single stub file outside of the SKILL:
