@@ -1424,6 +1424,117 @@ def cmd_mine(args) -> None:
     print("mempalace_mined: true")
 
 
+# ─── SessionEnd hook entry point (Phase 5 Plan 02) ────────────────────────────
+
+
+def cmd_once(args) -> None:
+    """Run one full sync-all pass using stub labels — the SessionEnd hook entry.
+
+    Flow (D-19 / RESEARCH §Pattern 4):
+      1. Capture run_started timestamp.
+      2. _require_config() — exits 2 on pre-flight (D-31 / D-10).
+      3. Discover unsynced sessions via discover_sessions(state).
+      4. For each: build stub label, tag with auto_label_hash_override='stub' (D-03),
+         call _write_session in-process (D-02: no stdin).
+      5. Write last_run.json (D-11) via _write_last_run.
+      6. Log one run-start + one run-finish line (OBSERV-02).
+      7. Print summary to stdout (OBSERV-01). Exit 0 / 1 per D-10.
+
+    Intentionally does NOT call cmd_mine (D-08) — mining is a separate step.
+    Intentionally does NOT read stdin (D-02 / Pitfall 2).
+
+    Python beginner note: errors are collected as typed dicts rather than raw
+    exception objects so last_run.json stays JSON-serializable. Only the first
+    10 errors are kept (D-13) to bound the file size if something goes very
+    wrong at 3 a.m.
+    """
+    run_started = datetime.now(timezone.utc).isoformat()
+
+    # Preflight: _require_config() calls sys.exit(2) on missing/invalid config.
+    config = _require_config()
+    state = load_state()
+
+    machine_label = config.get("machine_label", "unknown")
+    _log_sync(f"run-start trigger=once machine={machine_label}")
+
+    sessions = discover_sessions(state)
+
+    synced = 0
+    skipped = 0
+    failed = 0
+    flagged_for_review = 0
+    errors: list = []
+
+    for sess in sessions:
+        sid = sess["session_id"]
+        try:
+            # Build stub label; inject D-03 sentinel so _write_session writes
+            # auto_label_hash: stub (Plan 04's relabel subcommand uses this
+            # to find re-labelable files).
+            stub = make_stub_label(Path(sess["path"]), sid)
+            stub["auto_label_hash_override"] = "stub"
+
+            result = _write_session(sid, stub, config, state)
+            if result == "synced":
+                synced += 1
+                # D-16: every stub-synced file starts life flagged for review.
+                flagged_for_review += 1
+            else:
+                # "skipped" | "reconciled" | "edited" — all count as skipped
+                # for the per-run counters; sync.log already captured details.
+                skipped += 1
+        except Exception as e:
+            failed += 1
+            if len(errors) < 10:  # D-13
+                errors.append(
+                    {
+                        "session_id": sid,
+                        "error_class": type(e).__name__,
+                        "error_message": str(e),
+                    }
+                )
+
+    exit_code = 1 if failed > 0 else 0
+
+    last_run = {
+        "schema_version": 1,
+        "run_started_at": run_started,
+        "run_finished_at": datetime.now(timezone.utc).isoformat(),
+        "trigger": "once",
+        "machine_label": machine_label,
+        "hostname": socket.gethostname(),
+        "synced": synced,
+        "skipped": skipped,
+        "failed": failed,
+        "flagged_for_review": flagged_for_review,
+        # D-15: --once never mines — mining is a later/interactive step.
+        "mempalace_mined": "skipped",
+        "mempalace_reason": "not run by hook (--once skips mine)",
+        "exit_code": exit_code,
+        "errors": errors,
+    }
+
+    _write_last_run(last_run)
+
+    # Temporary inline summary — Plan 03 centralizes this into _format_summary(dict).
+    summary = (
+        f"Synced {synced} new, {skipped} skipped, {failed} failed "
+        f"({flagged_for_review} flagged for review). mempalace_mined: skipped"
+    )
+
+    _log_sync(f"run-finish trigger=once {summary}")
+    print(summary)
+
+    if failed > 0:
+        # D-21 / Pitfall 6: one short line on stderr — no stack traces.
+        print(
+            f"sync_chats --once: {failed} session(s) failed; see {LOG_PATH}",
+            file=sys.stderr,
+        )
+
+    sys.exit(exit_code)
+
+
 # ─── Entry Point ──────────────────────────────────────────────────────────────
 
 
@@ -1436,6 +1547,18 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+
+    # --once (Phase 5 D-07/D-19): SessionEnd hook entry point.
+    # action="store_true" is argparse's boolean-flag idiom — args.once is True
+    # if --once appeared, False otherwise. Pre-dispatched BEFORE subparsers
+    # because --once has no subcommand (RESEARCH Pitfall 1: without this
+    # pre-dispatch, `sync_chats.py --once` would fall into the subcommand-None
+    # branch and print help instead of running the hook).
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help="Run one sync pass using stub labels — SessionEnd hook entry point",
+    )
 
     # subparsers: lets us have "sync_chats.py init", "sync_chats.py scan", etc.
     subparsers = parser.add_subparsers(dest="subcommand", metavar="COMMAND")
@@ -1467,6 +1590,14 @@ def main() -> None:
     p_mine.set_defaults(func=cmd_mine)
 
     args = parser.parse_args()
+
+    # Pre-dispatch branch: --once runs cmd_once directly, BEFORE the
+    # subcommand-None guard below (RESEARCH Pitfall 1). Also honors the
+    # iCloud assertion (D-14) which all writer paths must satisfy.
+    if args.once:
+        _assert_not_icloud(CLAUDE_CHAT_HOME)
+        cmd_once(args)
+        return
 
     # No subcommand given: print help and exit
     if args.subcommand is None:
