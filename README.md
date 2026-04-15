@@ -215,6 +215,27 @@ The assertion resolves symlinks (`Path.resolve()`), so symlinking `~/.claude-cha
 
 **sync.log location.** `~/.claude-chat/sync.log`. Plain text, append-only, one line per event. Rotate manually if it grows large (log rotation is deferred to a future phase).
 
+**First `--once` run reports `failed: N` in `last_run.json` with "Could not find a free filename after 99 attempts".** Expected on machines with significant Claude Code history. The filename generator appends `-2`, `-3`, ..., `-99` before giving up; if you have 100+ subagent warmup sessions (or any cluster of sessions whose first user message is literally identical — common with Claude Code task runners, vibe-log, or similar tools), sessions 100+ hit the cap. The workaround is a one-time manual quarantine:
+
+```bash
+# Scan returns only still-pending sessions; append their UUIDs to state so they're skipped forever.
+python3 ~/.claude-chat/sync_chats.py scan | \
+  python3 -c "
+import json, sys, pathlib
+state_path = pathlib.Path.home() / '.claude-chat' / 'state.json'
+state = json.loads(state_path.read_text())
+remaining = [s['session_id'] for s in json.load(sys.stdin)]
+# Backup before writing
+state_path.with_suffix('.json.bak-quarantine').write_text(json.dumps(state, indent=2))
+seen = set(state.get('synced_session_ids', []))
+state['synced_session_ids'] = list(state.get('synced_session_ids', [])) + [s for s in remaining if s not in seen]
+state_path.write_text(json.dumps(state, indent=2))
+print(f'quarantined {len(remaining)} session(s); backup at {state_path}.bak-quarantine')
+"
+```
+
+**First interactive `/sync-chats` run reports a surprisingly large scan count** (e.g., "Found 867 new sessions"). Expected if the hook wasn't installed from session 1 — ultra-short sessions (fewer than 2 real user messages) are skipped at the SKILL layer rather than written, so they never enter `state.json` and get re-discovered on every scan. The first `--once` hook fire stub-writes all of them, after which future scans return near-zero. This isn't a bug; it's the SKILL's ultra-short filter showing its history.
+
 **Verify the setup end-to-end without ending a session:**
 
 ```bash
