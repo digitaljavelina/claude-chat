@@ -1331,37 +1331,45 @@ def cmd_write(args) -> None:
 
 
 def cmd_status(args) -> None:
-    """Show sync status summary (CORE-13).
+    """Show sync status summary (CORE-13 + OBSERV-04).
 
-    Displays:
-      - Machine label and hostname (from config)
-      - Vault path (from config)
-      - Last run timestamp (from state)
-      - Count of already-synced sessions
-      - Count of pending (unsynced) sessions discovered by scanner
+    Primary path (D-17): read last_run.json and display the D-23 canonical
+    summary plus run metadata. Fallback: use state.last_run_at until the first
+    --once fires on this machine (covers the one-run migration window).
     """
     config = _require_config()
     state = load_state()
 
-    # Discover pending sessions using the same scanner as cmd_scan
-    # (sessions not in synced_session_ids and with changed mtime+size fingerprint)
     if not PROJECTS_DIR.exists():
-        # Graceful degradation: no Claude projects directory on this machine yet
         print(f"Note: No Claude projects directory found at {PROJECTS_DIR}")
         pending = []
     else:
         pending = discover_sessions(state)
 
-    # Format last_run_at: state stores ISO timestamp or None on first run
-    last_run = state.get("last_run_at") or "never"
+    # D-17 one-run migration: prefer last_run.json; fall back to state.last_run_at
+    # until the first --once fires. `_load_json` returns {} on missing/malformed
+    # — the truthy check below treats both as "fall back".
+    last_run_data = _load_json(LAST_RUN_PATH)
 
-    # Print aligned status lines — Tab-like alignment for readability
-    print(f"Machine:    {config['machine_label']}")
-    print(f"Hostname:   {socket.gethostname()}")
-    print(f"Vault:      {config['vault_path']}")
-    print(f"Last run:   {last_run}")
-    print(f"Synced:     {len(state.get('synced_session_ids', []))} sessions")
-    print(f"Pending:    {len(pending)} sessions")
+    if last_run_data:
+        # Primary path — canonical summary + run metadata.
+        print(_format_summary(last_run_data))
+        print(f"Run at:     {last_run_data.get('run_finished_at', 'unknown')}")
+        print(f"Machine:    {last_run_data.get('machine_label', config['machine_label'])}")
+        print(f"Trigger:    {last_run_data.get('trigger', 'unknown')}")
+        print(f"Hostname:   {socket.gethostname()}")
+        print(f"Vault:      {config['vault_path']}")
+        print(f"Synced:     {len(state.get('synced_session_ids', []))} sessions")
+        print(f"Pending:    {len(pending)} sessions")
+    else:
+        # Fallback — preserves existing Phase 1 CORE-13 output verbatim.
+        last_run = state.get("last_run_at") or "never"
+        print(f"Machine:    {config['machine_label']}")
+        print(f"Hostname:   {socket.gethostname()}")
+        print(f"Vault:      {config['vault_path']}")
+        print(f"Last run:   {last_run}")
+        print(f"Synced:     {len(state.get('synced_session_ids', []))} sessions")
+        print(f"Pending:    {len(pending)} sessions")
 
 
 def cmd_mine(args) -> None:
