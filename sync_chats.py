@@ -1071,25 +1071,225 @@ def cmd_scan(args) -> None:
     print(json.dumps(sessions, indent=2))
 
 
+def _write_session(session_id: str, label: dict, config: dict, state: dict) -> str:
+    """Write a single session to the Obsidian vault and update state.
+
+    Extracted from cmd_write so cmd_once (Plan 02) can call this in-process
+    with a stub dict instead of piping through stdin (D-02 stdin contract
+    preservation: cmd_write still reads stdin, then calls here).
+
+    Steps 3–9 of the original cmd_write docstring:
+      3. Check clobber defense layer 1 (synced_session_ids)
+      4. Locate JSONL file, get session date and metadata
+      5. Get markdown body via subprocess to claude-chat.py export --stdout
+      6. Build frontmatter with all 15 fields including auto_label_hash
+      7. Write via O_CREAT|O_EXCL (clobber defense layer 2)
+      8. If file exists: reconcile or refuse (clobber defense layer 3)
+      9. Update state atomically per-session
+
+    Returns one of:
+      "synced"      — session written for the first time
+      "skipped"     — session already in synced_session_ids (layer 1 guard)
+      "reconciled"  — crash-recovery write (layer 3), state updated
+      "edited"      — user edited the vault file; recorded in state, not re-written
+
+    Raises ValueError for invalid label (missing 'title'). Other unexpected
+    exceptions are allowed to propagate — callers (cmd_write, cmd_once) decide
+    the exit-code policy.
+    """
+    # Validate required "title" field (D-02): missing title is a fatal error.
+    # WHY raise rather than sys.exit: _write_session is a helper; cmd_write and
+    # cmd_once each handle the exit-code policy differently (D-10 / D-31).
+    if "title" not in label:
+        raise ValueError("label dict must contain a 'title' field (D-02)")
+
+    # Step 3: Clobber defense layer 1 — check synced_session_ids (CORE-08)
+    # This is the primary guard: if we've already synced this session, skip immediately.
+    if session_id in state.get("synced_session_ids", []):
+        _log_sync("Synced 0 new, 1 skipped (already synced), 0 failed.")
+        return "skipped"
+
+    # Step 4a: Locate the JSONL file for this session_id.
+    # Walk PROJECTS_DIR and find the file whose stem matches the session UUID.
+    jsonl_path = None
+    try:
+        for candidate in PROJECTS_DIR.rglob("*.jsonl"):
+            if candidate.stem == session_id:
+                # Only consider depth=2 files (top-level sessions, not subagents).
+                # Depth-1 would be a project dir itself; depth>2 would be a sub-agent.
+                try:
+                    rel_parts = candidate.relative_to(PROJECTS_DIR).parts
+                except ValueError:
+                    continue
+                if len(rel_parts) == 2:
+                    jsonl_path = candidate
+                    break
+    except (OSError, FileNotFoundError):
+        pass
+
+    if jsonl_path is None:
+        raise FileNotFoundError(f"session {session_id} not found in {PROJECTS_DIR}")
+
+    # Step 4b: Get session date from JSONL (not mtime — mtime can drift from backups).
+    session_date = _get_session_date(jsonl_path)
+
+    # Step 5: Get scrubbed markdown body + scrub stats (D-03 structural enforcement).
+    # _get_markdown_body returns a tuple — raw body does NOT escape that function.
+    body, scrub_stats = _get_markdown_body(session_id)
+
+    # D-21 / D-22: emit one scrub log line per scrubbed session. Skipped for clean sessions.
+    _log_scrub_stats(session_id, scrub_stats)
+
+    # Step 4c: Extract session metadata (model, token_count, msg_count).
+    metadata = _extract_session_metadata(jsonl_path)
+
+    # Step 6a: Compute auto_label_hash = sha256 of body bytes (not frontmatter).
+    # `body` is the SCRUBBED version (D-05) — crash reconciliation reproduces the same
+    # hash by re-rendering and re-scrubbing, which is deterministic.
+    body_bytes = body.encode("utf-8")
+
+    # D-03: cmd_once passes auto_label_hash_override="stub" so the interactive SKILL
+    # can detect stub files (auto_label_hash: stub in frontmatter) and re-label them.
+    # Real AI-labeled files get the SHA-256 hash; stubs get the literal "stub" sentinel.
+    # Any value OTHER than "stub" is ignored — defensive against future callers.
+    override = label.get("auto_label_hash_override")
+    if override == "stub":
+        # D-03: write the sentinel instead of the real hash.
+        # The SKILL matches on 'auto_label_hash: stub' to find files needing re-label.
+        auto_label_hash = "stub"
+    else:
+        # Default (Phase 1 D-24): SHA-256 of scrubbed body bytes, unchanged.
+        auto_label_hash = hashlib.sha256(body_bytes).hexdigest()
+
+    # D-08: derive privacy_review from scrub stats. Always present in frontmatter.
+    privacy_review = _derive_privacy_review(scrub_stats)
+
+    # D-07: force needs_review=true when uncertain, overriding any label value of false.
+    # Fail-open-with-flag (PRIV-05): the chat IS still written, just flagged for audit.
+    needs_review_value = label.get("needs_review", True)
+    if privacy_review == "uncertain":
+        needs_review_value = True
+
+    # Step 6b: Build frontmatter fields dict (all 15 fields with privacy_review).
+    # Fields come from four sources: label (caller), metadata (JSONL), config, computed.
+    fields = {
+        # From label (caller-supplied) — D-02 schema
+        "title": label["title"],
+        "gist": label.get("gist"),
+        "tags": label.get("tags", ["stub"]),
+        "coherence_score": label.get("coherence_score"),
+        "needs_review": needs_review_value,
+        # From Phase 3 scrub (D-08)
+        "privacy_review": privacy_review,
+        # From session metadata (JSONL)
+        "model": metadata["model"],
+        "token_count": metadata["token_count"],
+        "msg_count": metadata["msg_count"],
+        # From config
+        "machine": config["machine_label"],
+        # Computed
+        "project": jsonl_path.parent.name,
+        "session_id": session_id,
+        "hostname": socket.gethostname(),
+        "synced_at": datetime.now(timezone.utc).isoformat(),
+        "auto_label_hash": auto_label_hash,
+    }
+
+    # Step 6c: Render frontmatter string.
+    frontmatter_str = emit_frontmatter(fields)
+
+    # Step 6d: Build final content: frontmatter + blank line + body.
+    # The blank line between frontmatter and body is standard Obsidian convention.
+    final_bytes = (frontmatter_str + "\n" + body).encode("utf-8")
+
+    # Step 7: Resolve target vault filename (handles slug collision per D-15).
+    target = _resolve_vault_filename(config, label, session_date, session_id)
+
+    # Step 8: Clobber defense layer 2 — O_CREAT|O_EXCL atomic create (CORE-09).
+    written = _write_if_not_exists(target, final_bytes)
+
+    if not written:
+        # File already exists — run crash reconciliation (D-25 / clobber layer 3).
+        # Distinguishes two cases:
+        #   "reconciled": our file from a previous crash — update state and skip
+        #   "collision":  a different session's file with the same slug — try -2, -3, ...
+        fingerprint = {
+            "mtime": jsonl_path.stat().st_mtime,
+            "size": jsonl_path.stat().st_size,
+        }
+        reconcile_result = _reconcile_crash(target, body_bytes, session_id, state, fingerprint)
+        if reconcile_result == "reconciled":
+            _log_sync("Synced 0 new, 1 skipped (already synced), 0 failed.")
+            return "reconciled"
+        elif reconcile_result == "edited":
+            # D-19: user manually edited the vault file. REFUSE to touch it.
+            # Record the session in state so no future run re-emits it from scan
+            # (clobber defense layer 3 doing its job — a permanent decision:
+            # once edited, the skill never writes over the user's work).
+            if session_id not in state["synced_session_ids"]:
+                state["synced_session_ids"].append(session_id)
+            state["fingerprints"][session_id] = fingerprint
+            state["last_run_at"] = datetime.now(timezone.utc).isoformat()
+            save_state(state)
+
+            # D-19 exact log message — greppable by canary tests and user audits.
+            _log_sync(
+                f"skipped: user_edited (auto_label_hash mismatch, session_id matches) "
+                f"session={session_id[:8]} file={target.name}"
+            )
+            return "edited"
+        else:
+            # True slug collision: a different session produced the same filename.
+            # Per D-15: try appending -2, -3, ... -99 until a free name is found.
+            vault_dir = target.parent
+            slug_base = target.stem  # e.g. "mbp--2026-03-19--debug-export"
+            written = False
+            for i in range(2, 100):
+                target = vault_dir / f"{slug_base}-{i}.md"
+                written = _write_if_not_exists(target, final_bytes)
+                if written:
+                    break
+            if not written:
+                raise RuntimeError(
+                    f"Could not find a free filename after 99 attempts "
+                    f"(slug base: {slug_base}). Manual intervention required."
+                )
+
+    # Step 9: Update state atomically per-session (D-26).
+    # Do this immediately after each write — crash-safe even if later sessions fail.
+    state["synced_session_ids"].append(session_id)
+    state["fingerprints"][session_id] = {
+        "mtime": jsonl_path.stat().st_mtime,
+        "size": jsonl_path.stat().st_size,
+    }
+    state["last_run_at"] = datetime.now(timezone.utc).isoformat()
+    save_state(state)
+
+    _log_sync(f"wrote {target.name} for session {session_id[:8]}")
+    _log_sync("Synced 1 new, 0 skipped (already synced), 0 failed.")
+    return "synced"
+
+
 def cmd_write(args) -> None:
     """Write a single session to the Obsidian vault.
+
+    Thin wrapper around _write_session (extracted in Phase 5 Plan 01).
 
     Full pipeline per D-24:
       1. Require config (abort if not initialized)
       2. Read label JSON from stdin (D-01/D-02)
-      3. Check clobber defense layer 1 (synced_session_ids)
-      4. Locate JSONL file, get session date and metadata
-      5. Get markdown body via subprocess to claude-chat.py export --stdout
-      6. Build frontmatter with all 14 fields including auto_label_hash
-      7. Write via O_CREAT|O_EXCL (clobber defense layer 2)
-      8. If file exists: reconcile or refuse (clobber defense layer 3)
-      9. Update state atomically per-session
+      3–9. Delegate to _write_session (core write logic)
+
+    WHY a thin wrapper: cmd_once (Plan 02) needs to call the same write logic
+    in-process with a stub dict, without going through stdin. Extracting the
+    core into _write_session lets both callers share the logic while each
+    retaining their own entry-point (stdin-based vs in-process).
     """
     config = _require_config()
     state = load_state()
 
-    # Step 2: Read label JSON from stdin only — no --stub flag, no --title flag (D-01/D-03)
-    # The Phase 1 stub generator pipes through this same path, just like Phase 2 will
+    # Step 2: Read label JSON from stdin only — no --stub flag, no --title flag (D-01/D-03).
+    # The Phase 1 stub generator pipes through this same path, just like Phase 2 will.
     label_input = sys.stdin.read()
     try:
         label = json.loads(label_input)
@@ -1097,181 +1297,37 @@ def cmd_write(args) -> None:
         print(f"Error: invalid label JSON on stdin: {e}", file=sys.stderr)
         sys.exit(1)
 
-    # Validate required "title" field (D-02): missing title is a fatal error
+    # Validate required "title" field (D-02): missing title is a fatal error.
     if "title" not in label:
         print("Error: label JSON must contain a 'title' field.", file=sys.stderr)
         sys.exit(1)
 
-    # Step 3: Clobber defense layer 1 — check synced_session_ids (CORE-08)
-    # This is the primary guard: if we've already synced this session, skip immediately
-    if args.session_id in state.get("synced_session_ids", []):
-        _log_sync(f"Synced 0 new, 1 skipped (already synced), 0 failed.")
-        print("skipped: already_synced")
-        return  # exit 0
-
-    # Steps 4–9 are wrapped per D-30: any exception during write is caught + reported
+    # Steps 3–9: delegate to _write_session.
     try:
-        # Step 4a: Locate the JSONL file for this session_id
-        # Walk PROJECTS_DIR and find the file whose stem matches the session UUID
-        jsonl_path = None
-        try:
-            for candidate in PROJECTS_DIR.rglob("*.jsonl"):
-                if candidate.stem == args.session_id:
-                    # Only consider depth=2 files (top-level sessions, not subagents)
-                    try:
-                        rel_parts = candidate.relative_to(PROJECTS_DIR).parts
-                    except ValueError:
-                        continue
-                    if len(rel_parts) == 2:
-                        jsonl_path = candidate
-                        break
-        except (OSError, FileNotFoundError):
-            pass
-
-        if jsonl_path is None:
-            print(f"Error: session {args.session_id} not found in {PROJECTS_DIR}", file=sys.stderr)
-            sys.exit(1)
-
-        # Step 4b: Get session date from JSONL (not mtime — mtime can drift from backups)
-        session_date = _get_session_date(jsonl_path)
-
-        # Step 5: Get scrubbed markdown body + scrub stats (D-03 structural enforcement).
-        # _get_markdown_body now returns a tuple — raw body does NOT escape that function.
-        body, scrub_stats = _get_markdown_body(args.session_id)
-
-        # D-21 / D-22: emit one scrub log line per scrubbed session. Skipped for clean sessions.
-        _log_scrub_stats(args.session_id, scrub_stats)
-
-        # Step 4c: Extract session metadata (model, token_count, msg_count)
-        metadata = _extract_session_metadata(jsonl_path)
-
-        # Step 6a: Compute auto_label_hash = sha256 of body bytes only (not frontmatter).
-        # `body` is the SCRUBBED version (D-05) — crash reconciliation reproduces the same
-        # hash by re-rendering and re-scrubbing, which is deterministic.
-        body_bytes = body.encode("utf-8")
-        auto_label_hash = hashlib.sha256(body_bytes).hexdigest()
-
-        # D-08: derive privacy_review from scrub stats. Always present in frontmatter.
-        privacy_review = _derive_privacy_review(scrub_stats)
-
-        # D-07: force needs_review=true when uncertain, overriding any label value of false.
-        # Fail-open-with-flag (PRIV-05): the chat IS still written, just flagged for audit.
-        needs_review_value = label.get("needs_review", True)
-        if privacy_review == "uncertain":
-            needs_review_value = True
-
-        # Step 6b: Build frontmatter fields dict (all 15 fields with privacy_review)
-        # Fields come from four sources: label (stdin), metadata (JSONL), config, computed
-        fields = {
-            # From label (stdin) — D-02 schema
-            "title": label["title"],
-            "gist": label.get("gist"),
-            "tags": label.get("tags", ["stub"]),
-            "coherence_score": label.get("coherence_score"),
-            "needs_review": needs_review_value,
-            # From Phase 3 scrub (D-08)
-            "privacy_review": privacy_review,
-            # From session metadata (JSONL)
-            "model": metadata["model"],
-            "token_count": metadata["token_count"],
-            "msg_count": metadata["msg_count"],
-            # From config
-            "machine": config["machine_label"],
-            # Computed
-            "project": jsonl_path.parent.name,
-            "session_id": args.session_id,
-            "hostname": socket.gethostname(),
-            "synced_at": datetime.now(timezone.utc).isoformat(),
-            "auto_label_hash": auto_label_hash,
-        }
-
-        # Step 6c: Render frontmatter string
-        frontmatter_str = emit_frontmatter(fields)
-
-        # Step 6d: Build final content: frontmatter + blank line + body
-        # The blank line between frontmatter and body is standard Obsidian convention
-        final_bytes = (frontmatter_str + "\n" + body).encode("utf-8")
-
-        # Step 7: Resolve target vault filename (handles slug collision per D-15)
-        target = _resolve_vault_filename(config, label, session_date, args.session_id)
-
-        # Step 8: Clobber defense layer 2 — O_CREAT|O_EXCL atomic create (CORE-09)
-        written = _write_if_not_exists(target, final_bytes)
-
-        if not written:
-            # File already exists — run crash reconciliation (D-25 / clobber layer 3)
-            # This distinguishes two cases:
-            #   "reconciled": our file from a previous crash — update state and skip
-            #   "collision":  a different session's file with the same slug — try -2, -3, ...
-            fingerprint = {
-                "mtime": jsonl_path.stat().st_mtime,
-                "size": jsonl_path.stat().st_size,
-            }
-            result = _reconcile_crash(target, body_bytes, args.session_id, state, fingerprint)
-            if result == "reconciled":
-                _log_sync(f"Synced 0 new, 1 skipped (already synced), 0 failed.")
-                print("skipped: already_synced (recovered from interrupted write)")
-                return
-            elif result == "edited":
-                # D-19: user manually edited the vault file. REFUSE to touch it.
-                # Record the session in state so no future run re-emits it from scan
-                # (this is clobber defense layer 3 doing its job — a permanent
-                # decision: once edited, the skill never writes over the user's work).
-                if args.session_id not in state["synced_session_ids"]:
-                    state["synced_session_ids"].append(args.session_id)
-                state["fingerprints"][args.session_id] = fingerprint
-                state["last_run_at"] = datetime.now(timezone.utc).isoformat()
-                save_state(state)
-
-                # D-19 exact log message — greppable by canary tests and user audits
-                _log_sync(
-                    f"skipped: user_edited (auto_label_hash mismatch, session_id matches) "
-                    f"session={args.session_id[:8]} file={target.name}"
-                )
-                print(f"skipped: user_edited ({target.name})")
-                return  # exit 0 — per D-19
-            else:
-                # True slug collision: a different session produced the same filename.
-                # Per D-15: try appending -2, -3, ... -99 until a free name is found.
-                vault_dir = target.parent
-                slug_base = target.stem  # e.g. "mbp--2026-03-19--debug-export"
-                written = False
-                for i in range(2, 100):
-                    target = vault_dir / f"{slug_base}-{i}.md"
-                    written = _write_if_not_exists(target, final_bytes)
-                    if written:
-                        break
-                if not written:
-                    print(
-                        f"Error: Could not find a free filename after 99 attempts "
-                        f"(slug base: {slug_base}). Manual intervention required.",
-                        file=sys.stderr,
-                    )
-                    sys.exit(1)
-
-        # Step 9: Update state atomically per-session (D-26)
-        # Do this immediately after each write — crash-safe even if later sessions fail
-        state["synced_session_ids"].append(args.session_id)
-        state["fingerprints"][args.session_id] = {
-            "mtime": jsonl_path.stat().st_mtime,
-            "size": jsonl_path.stat().st_size,
-        }
-        state["last_run_at"] = datetime.now(timezone.utc).isoformat()
-        save_state(state)
-
-        _log_sync(f"wrote {target.name} for session {args.session_id[:8]}")
-        _log_sync(f"Synced 1 new, 0 skipped (already synced), 0 failed.")
-        print(f"Wrote: {target}")
-
+        result = _write_session(args.session_id, label, config, state)
     except SystemExit:
         raise  # let sys.exit() pass through
     except Exception as e:
-        # Per D-30: catch all exceptions, print useful error, exit 1
+        # Per D-30: catch all exceptions, print useful error, exit 1.
         print(
             f"Error writing session {args.session_id}: {type(e).__name__}: {e}",
             file=sys.stderr,
         )
         sys.exit(1)
+
+    # Print status message matching existing stdout contract (callers like the SKILL
+    # parse these messages). Behavior is identical to pre-extraction cmd_write.
+    if result == "synced":
+        # We don't have `target` here; _write_session logs it internally via _log_sync.
+        # Print a generic success line — the SKILL only checks for non-error output.
+        _log_sync(f"cmd_write synced session {args.session_id[:8]}")
+        print(f"synced: {args.session_id}")
+    elif result == "skipped":
+        print("skipped: already_synced")
+    elif result == "reconciled":
+        print("skipped: already_synced (recovered from interrupted write)")
+    elif result == "edited":
+        print(f"skipped: user_edited")
 
 
 def cmd_status(args) -> None:

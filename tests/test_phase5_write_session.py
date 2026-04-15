@@ -89,7 +89,7 @@ _JSONL_CONTENT = (
 # Stub return value for _get_markdown_body — avoids subprocess call to claude-chat.py.
 # The tuple is (body_str, scrub_stats_dict) per Phase 3 return signature.
 _FAKE_BODY = "## Hello world test message for write session\n\nHello back from assistant."
-_FAKE_SCRUB_STATS = {"redacted_count": 0, "patterns": []}
+_FAKE_SCRUB_STATS = {"uncertain": 0, "total_chars_redacted": 0}
 
 
 def _make_config(vault_path: str) -> dict:
