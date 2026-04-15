@@ -34,6 +34,9 @@ PROJECTS_DIR = Path(os.environ.get("CLAUDE_PROJECTS_DIR", str(Path.home() / ".cl
 CONFIG_PATH = CLAUDE_CHAT_HOME / "config.json"
 STATE_PATH = CLAUDE_CHAT_HOME / "state.json"
 LOG_PATH = CLAUDE_CHAT_HOME / "sync.log"
+# New in Phase 5 (D-11/D-14): machine-readable record of the most-recent run;
+# atomic-overwrite each run with .bak preservation (same pattern as state.json).
+LAST_RUN_PATH = CLAUDE_CHAT_HOME / "last_run.json"
 
 # ─── Startup Assertions ───────────────────────────────────────────────────────
 
@@ -93,6 +96,49 @@ def _write_atomic(path: Path, data: dict) -> None:
 
     # tmp.replace(path) is os.rename() under the hood — atomic on POSIX filesystems
     tmp.replace(path)
+
+
+def _write_last_run(data: dict) -> None:
+    """Write last_run.json atomically with fsync + .bak preservation (D-14).
+
+    Near-copy of _write_atomic() — same crash-safety guarantees, different path.
+    See _write_atomic() docstring for why tmp+fsync+rename is atomic on APFS.
+
+    WHY a near-copy instead of parameterizing _write_atomic():
+      Per D-14 and the "Python beginner" note in CONTEXT.md, a near-copy with a
+      comment is more readable than a generic helper that hides what's different.
+      _write_atomic() uses sort_keys=True (for state.json determinism); here we
+      omit sort_keys so the dict key order is preserved — jq-friendly for humans
+      inspecting last_run.json.
+
+    WHY shutil.copy2 (not rename) for .bak:
+      copy2 preserves mtime — so the .bak timestamp tells you WHEN the previous
+      run happened, useful for post-mortem after a hook failure.
+    """
+    # .tmp and .bak are alongside LAST_RUN_PATH — same directory, same filesystem.
+    # We APPEND the suffix (last_run.json.tmp) rather than REPLACE it (last_run.tmp)
+    # so the filenames remain recognizable at a glance: "that's the temp write for last_run.json".
+    # Path(str(path) + ".tmp") appends; path.with_suffix(".tmp") would replace ".json".
+    # On APFS (macOS default), rename(2) is atomic: readers see old OR new, never partial.
+    tmp = Path(str(LAST_RUN_PATH) + ".tmp")
+    bak = Path(str(LAST_RUN_PATH) + ".bak")
+
+    # json.dumps without sort_keys — preserve caller's key order for readability.
+    # indent=2: human-readable when inspecting with `cat ~/.claude-chat/last_run.json`.
+    content = json.dumps(data, indent=2).encode("utf-8")
+
+    with open(tmp, "wb") as f:
+        f.write(content)
+        f.flush()  # flush Python's buffer into the OS kernel buffer
+        os.fsync(f.fileno())  # flush OS buffer to physical disk (durability on power loss)
+
+    if LAST_RUN_PATH.exists():
+        # Copy current file to .bak before overwriting — one-run undo for post-mortem.
+        # shutil.copy2 preserves mtime so .bak timestamp shows when the prior run ran.
+        shutil.copy2(LAST_RUN_PATH, bak)
+
+    # Atomic rename: after this line, readers see only the new content.
+    tmp.replace(LAST_RUN_PATH)
 
 
 def _load_json(path: Path) -> dict:
