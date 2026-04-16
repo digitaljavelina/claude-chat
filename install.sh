@@ -223,6 +223,113 @@ check_mempalace() {
   fi
 }
 
+check_mempalace_mcp() {
+  step "mempalace MCP server (recommended — enables AI memory tools in Claude Code)"
+  if ! command -v mempalace >/dev/null 2>&1; then
+    dim "  Skipping MCP check — mempalace CLI not installed (see earlier step)."
+    STEPS_SKIPPED=$((STEPS_SKIPPED+1))
+    return 0
+  fi
+
+  # Find the Python that mempalace was installed into (pipx venv python).
+  local mp_path mp_python
+  mp_path="$(command -v mempalace)"
+  # pipx shims are scripts whose shebang points at the venv python
+  mp_python="$(head -1 "$mp_path" 2>/dev/null | sed 's/^#!//' | tr -d ' ')"
+  if [[ -z "$mp_python" ]] || [[ ! -x "$mp_python" ]]; then
+    mp_python=""
+  fi
+
+  # Check if any python3 can already import mempalace.mcp_server
+  local py_candidates=("python3.14" "python3.13" "python3.12" "python3.11" "python3.10" "python3")
+  local working_py=""
+  for py in "${py_candidates[@]}"; do
+    if command -v "$py" >/dev/null 2>&1; then
+      if "$py" -c "import mempalace.mcp_server" 2>/dev/null; then
+        working_py="$py"
+        break
+      fi
+    fi
+  done
+
+  if [[ -n "$working_py" ]]; then
+    ok "mempalace MCP server importable via $working_py"
+  else
+    warn "No python3 on PATH can 'import mempalace.mcp_server'."
+    dim "  The mempalace CLI (pipx) works, but the Claude Code MCP server"
+    dim "  needs mempalace importable by a system python3.X."
+    # Find best python to install into
+    local target_py=""
+    for py in "${py_candidates[@]}"; do
+      if command -v "$py" >/dev/null 2>&1; then
+        target_py="$py"
+        break
+      fi
+    done
+    if [[ -z "$target_py" ]]; then
+      err "No python3.X found to install into."
+      STEPS_BLOCKED=$((STEPS_BLOCKED+1))
+      return 1
+    fi
+    if ask_yn "Install via '$target_py -m pip install --user mempalace'?" default_yes; then
+      run_cmd "$target_py -m pip install --user mempalace"
+      STEPS_INSTALLED=$((STEPS_INSTALLED+1))
+      working_py="$target_py"
+    else
+      STEPS_SKIPPED=$((STEPS_SKIPPED+1))
+      return 0
+    fi
+  fi
+
+  # Ensure the Claude Code plugin marketplace entry exists in settings.json
+  if [[ ! -f "$SETTINGS_JSON" ]]; then
+    dim "  Skipping plugin entry — $SETTINGS_JSON not found (Claude Code not installed?)."
+    return 0
+  fi
+
+  local has_marketplace
+  has_marketplace="$(python3 -c "
+import json, pathlib
+s = json.loads(pathlib.Path('$SETTINGS_JSON').read_text())
+mp = s.get('extraKnownMarketplaces', {}).get('mempalace')
+print('yes' if mp else 'no')
+" 2>/dev/null || echo "no")"
+
+  if [[ "$has_marketplace" == "yes" ]]; then
+    ok "mempalace plugin marketplace entry present in settings.json"
+  else
+    warn "mempalace plugin marketplace entry missing from settings.json."
+    if ask_yn "Add mempalace plugin to Claude Code settings?" default_yes; then
+      if [[ $DRY_RUN -eq 1 ]]; then
+        dim "  (dry-run: would add mempalace marketplace + enabledPlugins entry)"
+        STEPS_INSTALLED=$((STEPS_INSTALLED+1))
+        return 0
+      fi
+      # Atomic backup + jq append (same pattern as hook installer)
+      cp "$SETTINGS_JSON" "${SETTINGS_JSON}.bak-preMempalaceMCP-${TIMESTAMP}"
+      local tmp_file
+      tmp_file="$(mktemp)"
+      jq '.extraKnownMarketplaces.mempalace = {"source": {"repo": "milla-jovovich/mempalace", "source": "github"}}
+         | .enabledPlugins["mempalace@mempalace"] = true' \
+         "$SETTINGS_JSON" > "$tmp_file"
+      # Validate JSON before overwriting
+      if python3 -m json.tool "$tmp_file" >/dev/null 2>&1; then
+        mv "$tmp_file" "$SETTINGS_JSON"
+        ok "Added mempalace plugin to settings.json (backup at .bak-preMempalaceMCP-${TIMESTAMP})"
+        dim "  Restart Claude Code for the MCP server to connect."
+        STEPS_INSTALLED=$((STEPS_INSTALLED+1))
+      else
+        err "JSON validation failed — settings.json not modified."
+        rm -f "$tmp_file"
+        STEPS_BLOCKED=$((STEPS_BLOCKED+1))
+        return 1
+      fi
+    else
+      STEPS_SKIPPED=$((STEPS_SKIPPED+1))
+    fi
+  fi
+}
+
 check_claude_chat_home() {
   step "~/.claude-chat/ state directory"
   if [[ -d "$CLAUDE_CHAT_HOME" ]]; then
@@ -493,6 +600,7 @@ main() {
   check_jq            || true
   check_pipx          || true
   check_mempalace     || true
+  check_mempalace_mcp || true
   check_claude_chat_home || true
   check_symlink       || true
   check_claude_chat_export || true
