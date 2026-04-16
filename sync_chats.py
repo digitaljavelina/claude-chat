@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """sync_chats.py -- Sync Claude Code sessions to Obsidian vault."""
 
+# PEP 563: defer annotation evaluation so PEP 604 unions (`X | None`) parse on
+# Python 3.9 (macOS system python3). Keeps the module importable when PATH is
+# scrubbed to /usr/bin:/bin during the missing-binary UAT (Phase 4 Test 3).
+from __future__ import annotations
+
 # Standard library imports only — zero external dependencies (project invariant)
 import argparse
 import errno
