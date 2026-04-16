@@ -195,7 +195,7 @@ All decisions live in `.planning/PROJECT.md` §Key Decisions and the phase-level
 
 - **`claude-chat.py protect --scrub-content` stdin/stdout mode** — originally hedged in PROJECT.md as "possibly add." Resolved in D-01/D-02: scrub lives in `sync_chats.py` only. If a future milestone ever needs one-shot scrubbing of a standalone markdown file, revisit.
 - **`ScrubbedBody` typed wrapper class** — considered for stronger ordering enforcement. Rejected (D-03/D-04) in favor of function-boundary enforcement. Revisit if Python type checking becomes part of the project (e.g., mypy adopted).
-- **Clinical-specific PII patterns** — NCT IDs, EU/JMA/chiCTR codes, drug-dose prose, internal Amgen URLs. Explicitly out of scope per PROJECT.md; do NOT add in Phase 3.
+- **Clinical-specific PII patterns** — NCT IDs, EU/JMA/chiCTR codes, drug-dose prose, internal corporate URLs. Explicitly out of scope per PROJECT.md; do NOT add in Phase 3.
 - **Second-pass LLM scrub** — was originally a clinical-edge-case mitigation. Not needed for generic PII; if ever reconsidered, it would be its own milestone.
 - **Log rotation for `sync.log`** — deferred from Phase 1 D-33; scrub-log lines land in the same file. Still deferred; revisit if file exceeds ~10MB in practice.
 - **Re-scrub on existing files** — a `/sync-chats rescrub` command to retroactively apply scrub patterns to already-written vault files. Explicitly rejected by the three-layer clobber defense invariant: once a chat is in the vault, the skill never touches it again. Michael can manually scrub old files in Obsidian if ever needed.

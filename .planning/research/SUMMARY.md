@@ -116,10 +116,10 @@ PROJECT.md assumes `claude-chat.py protect` performs content-level PII scrubbing
 
 **Source:** PITFALLS.md #11
 
-The user is a clinical research MD at Amgen. Standard PII regex templates miss:
+The user works in clinical research. Standard PII regex templates miss:
 
 - **Clinical trial identifiers:** NCT IDs (`NCT\d{8}`), EU protocol codes, Japan JMA codes, China chiCTR codes
-- **Internal Amgen URLs and project codenames** (not on any public list)
+- **Internal corporate URLs and project codenames** (not on any public list)
 - **JWT tokens** (not caught by most generic credential scrubbers)
 - **GitHub token prefixes beyond `ghp_`** (`gho_`, `ghu_`, `ghs_`, `ghr_`, fine-grained `github_pat_`)
 - **Drug-dose prose** — "25 mg daily for 12 weeks" style content may identify a specific trial even without a code
@@ -181,7 +181,7 @@ The user is a clinical research MD at Amgen. Standard PII regex templates miss:
 - Per-machine stats command
 - Dataview query template bundle
 - Title regeneration for specific sessions (with heavy guards)
-- Per-project frontmatter overrides (e.g., Amgen-specific compliance flags)
+- Per-project frontmatter overrides (e.g., employer-specific compliance flags)
 
 **Anti-features (deliberately NOT built):**
 Menu bar app, web UI, review queue command, file watcher, dedup logic, shared state file, retroactive relabeling, external LLM API, custom search engine, configurable schemas, multi-folder routing, git backing, attachment extraction, multi-source importers.
@@ -419,7 +419,7 @@ The user's specific combination — Obsidian-as-review-UI, running inside Claude
 
 - [perez987/macOS-15-sequoia-sleep-issue](https://github.com/perez987/macOS-15-sequoia-sleep-issue) — informational, not a blocker
 - Sequoia+ TCC behavior on launchd — inferred; needs live validation in Phase 5
-- Clinical PII regex patterns (NCT, EU/JMA/chiCTR, Amgen-specific) — derived from user context; needs canary validation in Phase 3
+- Clinical PII regex patterns (NCT, EU/JMA/chiCTR, employer-specific) — derived from user context; needs canary validation in Phase 3
 
 ---
 

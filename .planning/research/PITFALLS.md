@@ -249,9 +249,9 @@ Developers conflate "is this session synced?" with "does the file for this sessi
 Pipeline A (WRONG):
 `session → Claude labels it (sees raw content) → Claude returns title+gist+tags → write markdown → protect pass on body → commit to vault`
 
-Claude saw the raw session. If the raw session contained "patient MRN 12345678 on blinatumomab protocol AMG-330-study-5," the title might be "Blinatumomab dosing for MRN 12345678" and the gist might mention the protocol code. The body gets scrubbed by `protect`, but **frontmatter is not scrubbed**. The title and tags sail through unscrubbed into an iCloud-synced vault.
+Claude saw the raw session. If the raw session contained "patient MRN 12345678 on protocol CORP-330-study-5," the title might be "Dosing for MRN 12345678" and the gist might mention the protocol code. The body gets scrubbed by `protect`, but **frontmatter is not scrubbed**. The title and tags sail through unscrubbed into an iCloud-synced vault.
 
-This is the single worst possible bug. The user is a board-certified pediatric hem/onc doing clinical research at Amgen. Frontmatter PII leakage is a HIPAA-adjacent event with potential regulatory consequences.
+This is the single worst possible bug. The user works in clinical research at a pharmaceutical company. Frontmatter PII leakage is a HIPAA-adjacent event with potential regulatory consequences.
 
 Pipeline B (CORRECT):
 `session → protect pass on body (in-memory) → Claude labels scrubbed content → write frontmatter + scrubbed body to vault`
@@ -282,9 +282,9 @@ Developers think of `protect` as "the last step before writing" because it's the
 `claude-chat.py protect` (per CONCERNS.md and user's note about lines 1170-1356) is a template-based regex scrubber. Regexes are famously bad at:
 
 - Patient names (no regex can find "John" is a name when "John" is also a common English word)
-- Protocol codes in novel formats (`AMG-330-5`, `NCT04123456`, `2024-503891-22-00` EU CT number, `JMA-IIA00456` Japanese trial ID, `CTR20200567` China)
+- Protocol codes in novel formats (`CORP-330-5`, `NCT04123456`, `2024-503891-22-00` EU CT number, `JMA-IIA00456` Japanese trial ID, `CTR20200567` China)
 - Drug doses in running prose ("15 mg/kg q2w")
-- Internal URLs (`internal.amgen.com/foo`, `myamgen.sharepoint.com/...`)
+- Internal corporate URLs (`internal.example.com/foo`, `corp.sharepoint.com/...`)
 - Slack workspace/channel IDs (`T0123ABCD`, `C0456EFGH`)
 - GitHub personal access tokens that don't match the `ghp_` prefix (classic tokens don't)
 - JWT tokens inline in chat logs
@@ -295,7 +295,7 @@ The user's professional context is exactly the worst case for regex scrubbers: c
 
 **How to avoid:**
 
-- **Audit the existing `TEMPLATES`** (claude-chat.py lines 1170-1356) and add categories: NCT IDs, EU CT numbers, Japan/China protocol IDs, Amgen-specific URL patterns, common drug-dose patterns, JWT regex, `gho_`/`ghu_`/`ghs_` token prefixes beyond `ghp_`, AWS `AKIA`/`ASIA` prefixes, Slack `T[A-Z0-9]{8}`/`C[A-Z0-9]{8}`.
+- **Audit the existing `TEMPLATES`** (claude-chat.py lines 1170-1356) and add categories: NCT IDs, EU CT numbers, Japan/China protocol IDs, employer-specific URL patterns, common drug-dose patterns, JWT regex, `gho_`/`ghu_`/`ghs_` token prefixes beyond `ghp_`, AWS `AKIA`/`ASIA` prefixes, Slack `T[A-Z0-9]{8}`/`C[A-Z0-9]{8}`.
 - **Add a canary-word mode:** user can populate `~/.claude-chat/canaries.txt` with literal strings that must never appear in output (patient first names, protocol codenames, family member names). Scrubber checks for these before writing.
 - **Second-pass LLM scrub:** after regex scrub + labeling, send the final content to Claude with a prompt "Return any PII you see in this content. Do not fix it, just list it." If the response is non-empty, set `needs_review: true` and mark the file with a `pii_flagged:` frontmatter field. Never block the write — the goal is to flag, not gate.
 - **Fail-closed default:** if the scrubber encounters an ambiguous match (e.g., "looks like an MRN but could be an order number"), mark the file `needs_review: true` and include a warning in frontmatter. Do NOT refuse the write — refusal turns the skill into a silent lossy bucket. Write + flag.
@@ -467,7 +467,7 @@ Obsidian watches the vault and reloads on change. If the skill writes the file w
 ### 19. Filename characters that macOS or Obsidian reject
 
 **What goes wrong:**
-Session titles may contain `:`, `/`, `\`, `|`, `?`, `*`, `<`, `>`, `"`, leading dots, trailing spaces, NUL bytes from weird tool output, or Unicode that normalizes differently between HFS+/APFS and iCloud. The slug from "What's going on with Amgen's Q4 report?" could fail in 3 different places.
+Session titles may contain `:`, `/`, `\`, `|`, `?`, `*`, `<`, `>`, `"`, leading dots, trailing spaces, NUL bytes from weird tool output, or Unicode that normalizes differently between HFS+/APFS and iCloud. The slug from "What's going on with ACME's Q4 report?" could fail in 3 different places.
 
 **How to avoid:**
 
@@ -656,7 +656,7 @@ Phase legend (aligned with expected roadmap):
 - Carlo Zottmann — [iOS iCloud Drive Synchronization Deep Dive](https://zottmann.org/2025/09/08/ios-icloud-drive-synchronization-deep.html) — eventual-consistency latency characteristics (MEDIUM)
 - `.planning/codebase/CONCERNS.md` — existing `claude-chat.py` atomic-write pattern (line 841-845) is the blueprint for state.json write safety (HIGH — inspected directly)
 - `.planning/codebase/INTEGRATIONS.md` — confirms no prior network/cloud integration; iCloud writes are a new surface for this codebase (HIGH — inspected directly)
-- User context (personal CLAUDE.md) — pediatric hem/onc + clinical research at Amgen + multi-jurisdictional regulatory work — drives the PII catastrophic-severity weighting (HIGH)
+- User context (personal CLAUDE.md) — clinical research at a pharmaceutical company + multi-jurisdictional regulatory work — drives the PII catastrophic-severity weighting (HIGH)
 - MCP and LLM-labeling pitfalls (#12, #13, #14, #15, #16) are drawn from general LLM engineering practice and should be validated against MemPalace MCP's actual tool surface in P4 research (LOW-MEDIUM until verified against real MCP docs)
 
 ---
