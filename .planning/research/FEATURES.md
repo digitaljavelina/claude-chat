@@ -128,7 +128,7 @@ From the prior art survey and community sources:
 - **Length:** ≤10 words, ≤60 characters. ChatGPT's internal title prompt uses "5 words or fewer" per the OpenAI forum thread — that's too short for our use case (we want enough specificity to distinguish "Debug RSS pagination" from "Fix RSS feed dates"). 10 words is a reasonable ceiling.
 - **Format:** Verb-leading when the session is a _task_ ("Debug RSS service pagination"); topic-leading when the session is an _exploration_ ("Python async context managers"). Don't force verb-first universally — it makes exploratory conversations sound like bug reports.
 - **Excluded words:** no "the," "a," "how to," "with Claude," "in Python" (language goes in tags). No quotes, emoji, or ellipses.
-- **Proper nouns:** keep them ("Amgen," "Digital Javelina," specific library names). These are the most searchable tokens.
+- **Proper nouns:** keep them (company names, project names, specific library names). These are the most searchable tokens.
 
 **Gist conventions:**
 
@@ -231,7 +231,7 @@ Triggered when: MVP has been running for a week and the user has validated the l
 - [ ] Dataview query templates bundled with the skill (written to `Chats/_templates/` so user has examples)
 - [ ] `low_signal` auto-detection tuning (if user reports too many/few false positives)
 - [ ] Title regeneration for a _specific_ session on user request (`/sync-chats relabel <session_id>` — but only with `--force`, and only if the user hasn't edited the file; check by comparing file mtime to sync time)
-- [ ] Per-project override for frontmatter (e.g., Amgen chats get extra `compliance_review: true` flag automatically)
+- [ ] Per-project override for frontmatter (e.g., work chats get extra `compliance_review: true` flag automatically)
 
 **Why defer all of these:** They're all convenience features on top of a working system. None of them block Core Value.
 

@@ -60,7 +60,7 @@ If everything else fails, this must work: chats flow into `~/.../Documents/Chats
 - **`launchd` LaunchAgent (originally planned)** — replaced by Claude Code SessionEnd hook (event-driven). Research surfaced that `claude -p "/sync-chats"` does not work in headless mode (Anthropic disables slash commands in `-p`), and event-driven hooks fit the use case better than time-based scheduling: no TCC headaches, no PATH issues, no sleep edge cases, sub-second latency. May be reconsidered as an optional belt-and-suspenders catch-up daemon in a future milestone if event-only proves insufficient.
 - **`/schedule` (RemoteTrigger) for sync scheduling** — `/v1/code/triggers` runs in Anthropic's cloud, which has no access to local `~/.claude/projects/`, the local iCloud-mounted vault, or the local state file. Investigated and rejected.
 - **Per-chat MemPalace MCP calls** — the MemPalace CLI ships `mempalace mine <dir> --mode convos --extract general`, a purpose-built bulk command verified live on the user's machine. One shell-out at end of run replaces an entire orchestration loop. Per-chat MCP integration is unnecessary scope.
-- **Clinical-specific PII patterns (NCT IDs, EU/JMA/chiCTR codes, drug-dose prose, internal Amgen URLs)** — user explicitly confirmed clinical content will not be in these chats. Generic credential/token/email/IP scrubbing remains in scope (still cheap and beneficial), but no clinical-specific augmentation, no per-user clinical canary file, no second-pass LLM scrub.
+- **Clinical-specific PII patterns (NCT IDs, EU/JMA/chiCTR codes, drug-dose prose, internal corporate URLs)** — user explicitly confirmed clinical content will not be in these chats. Generic credential/token/email/IP scrubbing remains in scope (still cheap and beneficial), but no clinical-specific augmentation, no per-user clinical canary file, no second-pass LLM scrub.
 - **Custom search UI on top of `claude-chat.py`** — same reason as the web UI: Obsidian handles it
 - **Dedup logic across machines** — `~/.claude/projects/` is strictly local per Mac, so the two machines have disjoint session sets; no dedup needed
 - **State file in iCloud** — two machines writing to the same cursor file would corrupt sync; state must be strictly local. Startup assertion enforces this.
@@ -81,7 +81,7 @@ If everything else fails, this must work: chats flow into `~/.../Documents/Chats
 **Relevant prior work:**
 
 - Michael has already mapped this codebase with `/gsd-map-codebase` (2026-04-09); artifacts live in `.planning/codebase/`
-- Michael is a Claude Code power user and physician-turned-clinical-research-MD at Amgen — he uses Claude Code across clinical informatics, blog writing (Digital Javelina), homelab IaC, iOS side projects, and regulatory work. The variety of contexts is exactly what makes chronological titling hard and AI summarization valuable
+- The user is a Claude Code power user working across clinical informatics, blog writing, homelab IaC, iOS side projects, and regulatory work. The variety of contexts is exactly what makes chronological titling hard and AI summarization valuable
 - Michael's global CLAUDE.md describes him as a "vibe-coder" who "builds to learn" — this project is both the thing he wants _and_ a learning vehicle for Python idioms, skill authoring, and Claude Code hook configuration
 - Michael is a Python beginner (per `CLAUDE.local.md`) — explanations should accompany implementation
 
