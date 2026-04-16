@@ -561,6 +561,76 @@ check_session_end_hook() {
   fi
 }
 
+check_skills() {
+  step "~/.claude/skills/ symlinks for project skills"
+  local user_skills="$HOME/.claude/skills"
+  local repo_skills="$REPO_ROOT/.claude/skills"
+
+  if [[ ! -d "$repo_skills" ]]; then
+    dim "  No .claude/skills/ directory in repo — skipping."
+    return 0
+  fi
+
+  if [[ ! -d "$user_skills" ]]; then
+    warn "$user_skills does not exist."
+    if ask_yn "Create it now?" default_yes; then
+      run_cmd "mkdir -p '$user_skills'"
+    else
+      STEPS_SKIPPED=$((STEPS_SKIPPED+1))
+      return 0
+    fi
+  fi
+
+  # Symlink each skill directory from the repo to user-level.
+  # Skip skills that are just test/dev utilities (export-test, verify).
+  local skill_name target link
+  for skill_dir in "$repo_skills"/*/; do
+    [[ ! -d "$skill_dir" ]] && continue
+    skill_name="$(basename "$skill_dir")"
+
+    # Skip project-only dev/test skills that shouldn't be global.
+    case "$skill_name" in
+      export-test|verify) continue ;;
+    esac
+
+    target="$repo_skills/$skill_name"
+    link="$user_skills/$skill_name"
+
+    if [[ -L "$link" ]]; then
+      local current_target
+      current_target="$(readlink "$link")"
+      if [[ "$current_target" == "$target" ]]; then
+        ok "skill /$skill_name already linked"
+        continue
+      fi
+      warn "skill /$skill_name symlink points to $current_target (expected $target)."
+      if ask_yn "Replace with link to repo?" default_yes; then
+        run_cmd "rm '$link' && ln -s '$target' '$link'"
+        STEPS_INSTALLED=$((STEPS_INSTALLED+1))
+      else
+        STEPS_SKIPPED=$((STEPS_SKIPPED+1))
+      fi
+    elif [[ -d "$link" ]]; then
+      # Standalone directory (not a symlink) — offer to replace with symlink.
+      warn "skill /$skill_name exists as standalone directory (not linked to repo)."
+      if ask_yn "Replace with symlink to repo version? (old dir backed up)" default_yes; then
+        run_cmd "mv '$link' '${link}.bak-${TIMESTAMP}' && ln -s '$target' '$link'"
+        STEPS_INSTALLED=$((STEPS_INSTALLED+1))
+      else
+        STEPS_SKIPPED=$((STEPS_SKIPPED+1))
+      fi
+    else
+      warn "skill /$skill_name not installed at user level."
+      if ask_yn "Symlink /$skill_name → repo?" default_yes; then
+        run_cmd "ln -s '$target' '$link'"
+        STEPS_INSTALLED=$((STEPS_INSTALLED+1))
+      else
+        STEPS_SKIPPED=$((STEPS_SKIPPED+1))
+      fi
+    fi
+  done
+}
+
 sanity_smoke_test() {
   step "Smoke test — scan + status"
   if [[ ! -f "$CLAUDE_CHAT_HOME/config.json" ]]; then
@@ -606,6 +676,7 @@ main() {
   check_claude_chat_export || true
   check_config        || true
   check_session_end_hook || true
+  check_skills        || true
   sanity_smoke_test   || true
 
   # ─── Report ────────────────────────────────────────────────────────────────
