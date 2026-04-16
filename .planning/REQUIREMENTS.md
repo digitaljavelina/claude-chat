@@ -126,48 +126,48 @@ Explicit exclusions documented to prevent scope creep. Most reasoning lives in P
 
 All 40 v1 requirements mapped to phases during roadmap creation (note: the original "38 total" count in this file was an undercount; actual count is 40 across CORE:13 + LABEL:9 + PRIV:6 + MEM:3 + HOOK:5 + OBSERV:4).
 
-| Requirement | Phase   | Status  |
-| ----------- | ------- | ------- |
-| CORE-01     | Phase 1 | Pending |
-| CORE-02     | Phase 1 | Pending |
-| CORE-03     | Phase 1 | Pending |
-| CORE-04     | Phase 1 | Pending |
-| CORE-05     | Phase 1 | Pending |
-| CORE-06     | Phase 1 | Pending |
-| CORE-07     | Phase 1 | Pending |
-| CORE-08     | Phase 1 | Pending |
-| CORE-09     | Phase 1 | Pending |
-| CORE-10     | Phase 1 | Pending |
-| CORE-11     | Phase 1 | Pending |
-| CORE-12     | Phase 1 | Pending |
-| CORE-13     | Phase 1 | Pending |
-| LABEL-01    | Phase 2 | Pending |
-| LABEL-02    | Phase 2 | Pending |
-| LABEL-03    | Phase 2 | Pending |
-| LABEL-04    | Phase 2 | Pending |
-| LABEL-05    | Phase 2 | Pending |
-| LABEL-06    | Phase 2 | Pending |
-| LABEL-07    | Phase 2 | Pending |
-| LABEL-08    | Phase 2 | Pending |
-| LABEL-09    | Phase 1 | Pending |
-| PRIV-01     | Phase 3 | Pending |
-| PRIV-02     | Phase 3 | Pending |
-| PRIV-03     | Phase 3 | Pending |
-| PRIV-04     | Phase 3 | Pending |
-| PRIV-05     | Phase 3 | Pending |
-| PRIV-06     | Phase 3 | Pending |
-| MEM-01      | Phase 4 | Pending |
-| MEM-02      | Phase 4 | Pending |
-| MEM-03      | Phase 4 | Pending |
-| HOOK-01     | Phase 5 | Pending |
-| HOOK-02     | Phase 5 | Pending |
-| HOOK-03     | Phase 5 | Pending |
-| HOOK-04     | Phase 5 | Pending |
-| HOOK-05     | Phase 5 | Pending |
-| OBSERV-01   | Phase 5 | Pending |
-| OBSERV-02   | Phase 5 | Pending |
-| OBSERV-03   | Phase 5 | Pending |
-| OBSERV-04   | Phase 5 | Pending |
+| Requirement | Phase   | Status                                                |
+| ----------- | ------- | ----------------------------------------------------- |
+| CORE-01     | Phase 1 | Complete                                              |
+| CORE-02     | Phase 1 | Complete                                              |
+| CORE-03     | Phase 1 | Complete                                              |
+| CORE-04     | Phase 1 | Complete                                              |
+| CORE-05     | Phase 1 | Complete                                              |
+| CORE-06     | Phase 1 | Complete                                              |
+| CORE-07     | Phase 1 | Complete                                              |
+| CORE-08     | Phase 1 | Complete                                              |
+| CORE-09     | Phase 1 | Complete                                              |
+| CORE-10     | Phase 1 | Complete                                              |
+| CORE-11     | Phase 1 | Complete                                              |
+| CORE-12     | Phase 1 | Complete                                              |
+| CORE-13     | Phase 1 | Complete                                              |
+| LABEL-01    | Phase 2 | Complete                                              |
+| LABEL-02    | Phase 2 | Partial (human gate — live `/sync-chats` invocation)  |
+| LABEL-03    | Phase 2 | Complete                                              |
+| LABEL-04    | Phase 2 | Complete                                              |
+| LABEL-05    | Phase 2 | Complete                                              |
+| LABEL-06    | Phase 2 | Complete                                              |
+| LABEL-07    | Phase 2 | Complete                                              |
+| LABEL-08    | Phase 2 | Complete                                              |
+| LABEL-09    | Phase 1 | Complete                                              |
+| PRIV-01     | Phase 3 | Complete                                              |
+| PRIV-02     | Phase 3 | Complete                                              |
+| PRIV-03     | Phase 3 | Complete                                              |
+| PRIV-04     | Phase 3 | Complete                                              |
+| PRIV-05     | Phase 3 | Complete                                              |
+| PRIV-06     | Phase 3 | Complete                                              |
+| MEM-01      | Phase 4 | Partial (human_needed — live-vault E2E console trace) |
+| MEM-02      | Phase 4 | Complete                                              |
+| MEM-03      | Phase 4 | Complete                                              |
+| HOOK-01     | Phase 5 | Complete                                              |
+| HOOK-02     | Phase 5 | Complete                                              |
+| HOOK-03     | Phase 5 | Complete                                              |
+| HOOK-04     | Phase 5 | Complete                                              |
+| HOOK-05     | Phase 5 | Partial (human_needed — second-Mac onboarding)        |
+| OBSERV-01   | Phase 5 | Complete                                              |
+| OBSERV-02   | Phase 5 | Complete                                              |
+| OBSERV-03   | Phase 5 | Complete                                              |
+| OBSERV-04   | Phase 5 | Complete                                              |
 
 **Coverage:** 40 mapped, 0 unmapped ✓
 
