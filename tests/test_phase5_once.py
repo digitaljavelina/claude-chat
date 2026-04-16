@@ -201,11 +201,19 @@ class TestCmdOnceFailure(_BaseCmdOnceTest):
                 raise RuntimeError("boom on A")
             return real_write(session_id, label, config, state)
 
-        with self._patch_markdown_body(), mock.patch("sync_chats._write_session", side_effect=flaky_write):
+        stderr_buf = io.StringIO()
+        with self._patch_markdown_body(), mock.patch("sync_chats._write_session", side_effect=flaky_write), mock.patch(
+            "sys.stderr", stderr_buf
+        ):
             with self.assertRaises(SystemExit) as ctx:
                 sync_chats.cmd_once(mock.Mock(once=True))
 
         self.assertEqual(ctx.exception.code, 1)
+        captured_stderr = stderr_buf.getvalue()
+        self.assertLessEqual(
+            len(captured_stderr), 200, f"stderr too long ({len(captured_stderr)} chars): {captured_stderr!r}"
+        )
+        self.assertNotIn("Traceback", captured_stderr)
         lr = json.loads(sync_chats.LAST_RUN_PATH.read_text())
         self.assertEqual(lr["synced"], 1)
         self.assertEqual(lr["failed"], 1)
