@@ -147,6 +147,56 @@ check_obsidian() {
   return 1
 }
 
+check_obsidian_cli() {
+  step "obsidian-cli (optional — enables the /obsidian-cli Claude Code skill)"
+
+  local obs_cli_app="/Applications/Obsidian.app/Contents/MacOS/obsidian-cli"
+  local local_bin="$HOME/.local/bin"
+  local local_link="$local_bin/obsidian-cli"
+
+  # The bundled binary is a no-op unless an in-app toggle is ON. Even when the
+  # symlink is perfect and PATH is set, obsidian-cli commands silently fail to
+  # connect if this toggle is off. Surface it every time so users don't debug
+  # "why doesn't obsidian-cli work" from the wrong angle.
+  _print_cli_toggle_reminder() {
+    dim "  Requires: Obsidian → Settings → General → Advanced → 'Command line interface' = ON"
+    dim "  Also requires Obsidian to be running for CLI calls to connect."
+  }
+
+  # Already on PATH? Done.
+  if command -v obsidian-cli >/dev/null 2>&1; then
+    ok "obsidian-cli found at $(command -v obsidian-cli)"
+    _print_cli_toggle_reminder
+    return 0
+  fi
+
+  # Not on PATH — is it bundled with Obsidian.app?
+  if [[ ! -x "$obs_cli_app" ]]; then
+    warn "obsidian-cli not on PATH and not bundled with Obsidian.app."
+    dim  "  This tool ships inside Obsidian.app's MacOS bundle. Update/reinstall"
+    dim  "  Obsidian from https://obsidian.md if the binary is missing."
+    STEPS_SKIPPED=$((STEPS_SKIPPED+1))
+    return 0
+  fi
+
+  # Bundled but not exposed — offer to symlink into ~/.local/bin.
+  warn "obsidian-cli exists in Obsidian.app but isn't on your PATH."
+  dim  "  Source:  $obs_cli_app"
+  dim  "  Symlink: $local_link"
+  if ask_yn "Symlink obsidian-cli into $local_bin?" default_yes; then
+    run_cmd "mkdir -p '$local_bin' && ln -sf '$obs_cli_app' '$local_link'"
+    STEPS_INSTALLED=$((STEPS_INSTALLED+1))
+    # PATH sanity check.
+    if [[ ":$PATH:" != *":$local_bin:"* ]]; then
+      dim "  Note: $local_bin is not on your PATH. Add to ~/.zshrc:"
+      dim "    export PATH=\"\$HOME/.local/bin:\$PATH\""
+    fi
+    _print_cli_toggle_reminder
+  else
+    STEPS_SKIPPED=$((STEPS_SKIPPED+1))
+  fi
+}
+
 check_claude_code() {
   step "Claude Code"
   if command -v claude >/dev/null 2>&1; then
@@ -561,6 +611,39 @@ check_session_end_hook() {
   fi
 }
 
+# Warn if ~/.claude/skills/ resolves into a sync-managed path (stow, Syncthing,
+# iCloud, Dropbox, etc.). Skill symlinks written into a synced folder will
+# replicate to every peer — and absolute-path symlinks into your local repo
+# will break on peers whose repo lives at a different absolute path.
+# Silent no-op when the dir is a plain local directory.
+detect_synced_skills_dir() {
+  local user_skills="$1"
+  [[ ! -L "$user_skills" ]] && return 0
+  local resolved
+  resolved="$(cd "$user_skills" 2>/dev/null && pwd -P)" || return 0
+
+  local kind=""
+  case "$resolved" in
+    *"Mobile Documents"*|*"/iCloud"*)         kind="iCloud Drive" ;;
+    *"CloudStorage/Dropbox"*|*"/Dropbox/"*)    kind="Dropbox" ;;
+    *"CloudStorage/GoogleDrive-"*)             kind="Google Drive" ;;
+    *"CloudStorage/OneDrive-"*)                kind="OneDrive" ;;
+    *"/Sync/"*|*"/syncthing"*|*"/Syncthing"*)  kind="Syncthing (likely)" ;;
+  esac
+
+  warn "$user_skills is a symlink → $resolved"
+  [[ -n "$kind" ]] && dim "    detected sync system: $kind"
+  echo "    Skill symlinks written here will replicate across machines, and"
+  echo "    absolute-path symlinks into your local repo will BREAK on any"
+  echo "    machine where the repo lives at a different path."
+  dim   "    Mitigations:"
+  dim   "      • Add the skill name(s) to your sync tool's ignore list"
+  dim   "        (e.g. Syncthing .stignore, iCloud exclusions)."
+  dim   "      • Or standardize the repo path across all machines."
+  dim   "      • Or install each skill as a plain copy (not a symlink) per machine."
+  echo ""
+}
+
 check_skills() {
   step "~/.claude/skills/ symlinks for project skills"
   local user_skills="$HOME/.claude/skills"
@@ -570,6 +653,8 @@ check_skills() {
     dim "  No .claude/skills/ directory in repo — skipping."
     return 0
   fi
+
+  detect_synced_skills_dir "$user_skills"
 
   if [[ ! -d "$user_skills" ]]; then
     warn "$user_skills does not exist."
@@ -612,9 +697,14 @@ check_skills() {
       fi
     elif [[ -d "$link" ]]; then
       # Standalone directory (not a symlink) — offer to replace with symlink.
+      # Back up OUTSIDE the skills tree so the sibling dir can't be auto-discovered
+      # as a second skill by Claude Code, and so sync tools managing ~/.claude/skills
+      # don't replicate the backup across machines.
       warn "skill /$skill_name exists as standalone directory (not linked to repo)."
-      if ask_yn "Replace with symlink to repo version? (old dir backed up)" default_yes; then
-        run_cmd "mv '$link' '${link}.bak-${TIMESTAMP}' && ln -s '$target' '$link'"
+      local backup_root="$CLAUDE_CHAT_HOME/backups/skills"
+      local backup_path="$backup_root/${skill_name}-${TIMESTAMP}"
+      if ask_yn "Replace with symlink to repo version? (backup: $backup_path)" default_yes; then
+        run_cmd "mkdir -p '$backup_root' && mv '$link' '$backup_path' && ln -s '$target' '$link'"
         STEPS_INSTALLED=$((STEPS_INSTALLED+1))
       else
         STEPS_SKIPPED=$((STEPS_SKIPPED+1))
@@ -666,6 +756,7 @@ main() {
   # list regardless so the final report shows everything.
   check_python        || true
   check_obsidian      || true
+  check_obsidian_cli  || true
   check_claude_code   || true
   check_jq            || true
   check_pipx          || true

@@ -22,6 +22,7 @@ The design: single-file, stdlib-only Python — no external packages, no virtual
 - **An Obsidian vault** at a known absolute path. Any folder works; we write into `<vault>/Chats/`, created automatically on first write.
 - **Claude Code** installed — this is what fires the SessionEnd hook.
 - **Optional:** `pipx` + `mempalace` for MemPalace integration (see Section 7).
+- **Optional:** `obsidian-cli` — the official Obsidian CLI ships inside `/Applications/Obsidian.app/Contents/MacOS/obsidian-cli` but isn't on `$PATH` by default. `./install.sh` detects it and offers to symlink it into `~/.local/bin/` so the `/obsidian-cli` Claude Code skill works out of the box. **You must also enable** Obsidian → Settings → General → Advanced → **Command line interface** (toggle ON). Without this, every `obsidian-cli` call silently fails to connect — no error from the binary itself. Obsidian must be running for CLI calls to work.
 - **`~/.claude-chat/` must be on local disk, NOT cloud-synced.** State files on cloud-sync services (iCloud Drive, Dropbox, Google Drive, OneDrive, Syncthing, etc.) race each other across machines and corrupt. The script explicitly detects macOS iCloud (`~/Library/Mobile Documents/`, paths containing `iCloud`) and refuses to run — but other services won't trigger the assertion, so if you use Dropbox or similar, keep `~/.claude-chat/` out of those folders manually. See Section 9 if you need to relocate.
 - **Your Obsidian vault location doesn't matter** — it can be local, iCloud, Dropbox, or anywhere else. Only `~/.claude-chat/` (the state directory) needs to stay local.
 
@@ -29,7 +30,9 @@ The design: single-file, stdlib-only Python — no external packages, no virtual
 
 ## 3. Install
 
-**Fastest path — guided installer:** after cloning, run `./install.sh` from the repo root. It interactively walks every prerequisite + setup step (Python, Obsidian, Claude Code, pipx, mempalace, symlink, `init`, SessionEnd hook) and skips anything already in place. Use `./install.sh --dry-run` for a read-only status report, or `-y` to auto-approve every prompt.
+**Fastest path — guided installer:** after cloning, run `./install.sh` from the repo root. It interactively walks every prerequisite + setup step (Python, Obsidian, obsidian-cli, Claude Code, pipx, mempalace, symlink, `init`, SessionEnd hook, per-skill symlinks) and skips anything already in place. Use `./install.sh --dry-run` for a read-only status report, or `-y` to auto-approve every prompt.
+
+The installer also detects whether `~/.claude/skills/` resolves into a sync-managed path (stow, Syncthing, iCloud Drive, Dropbox) and warns — absolute-path symlinks written into a synced folder will break on peer machines where the repo lives at a different location. See Section 9 for the mitigation pattern. If the installer needs to back up an existing skill directory, it writes the backup to `~/.claude-chat/backups/skills/<name>-<timestamp>/` rather than leaving a `.bak-*` sibling inside the skills tree — this keeps the backup out of any sync layer and prevents Claude Code from discovering it as a ghost slash command.
 
 **Manual path** (what `install.sh` does under the hood):
 
@@ -217,6 +220,17 @@ mv ~/.claude-chat /Users/you/claude-chat-local
 The assertion resolves symlinks (`Path.resolve()`), so symlinking `~/.claude-chat` to an iCloud path will still fail — the env-var route is cleanest.
 
 **State corruption after a `~/.claude-chat/` sync across machines (Dropbox / Google Drive / OneDrive / Syncthing).** The built-in assertion only detects macOS iCloud — other cloud-sync services won't trigger the error but will still cause the same corruption class (two machines racing on `state.json` writes). If you notice sessions disappearing from state, duplicate vault files, or `last_run.json` flipping contents between machines, check whether `~/.claude-chat/` is inside a synced folder. Fix: same two options as the iCloud case above — relocate via `CLAUDE_CHAT_HOME` env var or physically move the folder out of the synced tree.
+
+**`install.sh` warns that `~/.claude/skills/` is a symlink into a sync-managed folder.** You've set up stow / Syncthing / iCloud / Dropbox to replicate parts of `~/.claude/` across machines, and `~/.claude/skills/` is one of the synced paths. This is supported but creates a portability problem: `install.sh` writes absolute-path symlinks from `~/.claude/skills/<skill>` into your local repo clone, and those symlinks replicate to every peer machine as-is — meaning they'll be broken on any peer whose repo lives at a different absolute path. The installer can't fix this for you; it can only warn. Mitigations, in order of simplicity:
+
+1. **Add the skill name(s) to your sync tool's ignore list** so each machine manages its own local symlink. For Syncthing, edit the folder's `.stignore` and add entries like:
+   ```
+   .claude/skills/sync-chats
+   .claude/skills/sync-chats.bak-*
+   ```
+   Then re-run `./install.sh` on each machine — each one will create a correctly-targeted local symlink that its own sync tool leaves alone. Existing (possibly-broken) copies on each peer must be deleted manually; `.stignore` stops future sync but doesn't remove what's already there.
+2. **Standardize repo paths across machines.** If every peer has the repo at the same absolute path (e.g., `~/Projects/claude-chat`), the shared symlink just works. Feasible for personal setups, harder for teams.
+3. **Install the skill as a plain directory copy.** Delete the symlink and copy the skill dir into `~/.claude/skills/` directly. You lose live-edit-via-git-pull, but gain full portability across the synced tree.
 
 **Hook doesn't fire on session end.**
 
